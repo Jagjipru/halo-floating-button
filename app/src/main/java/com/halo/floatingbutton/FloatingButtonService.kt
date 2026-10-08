@@ -47,6 +47,7 @@ class FloatingButtonService : Service() {
     private var buttonX = 0
     private var buttonY = 0
     private var torchOn = false
+    private var idleRunnable: Runnable? = null
 
     private val density get() = resources.displayMetrics.density
     private fun dp(v: Int) = (v * density).toInt()
@@ -58,8 +59,10 @@ class FloatingButtonService : Service() {
     private fun buttonAlpha() = Prefs.alpha(this) / 100f
 
     private val prefsListener =
-        SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
-            handler.post { if (!isOpen) refreshCollapsed() }
+        SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == Prefs.KEY_COLOR || key == Prefs.KEY_ALPHA || key == Prefs.KEY_SIZE) {
+                handler.post { if (!isOpen) refreshCollapsed() }
+            }
         }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -70,8 +73,14 @@ class FloatingButtonService : Service() {
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
-        buttonX = resources.displayMetrics.widthPixels - dp(56) - dp(16)
-        buttonY = resources.displayMetrics.heightPixels / 2
+        Prefs.seedDefaults(this)
+        val sz = dp(Prefs.size(this))
+        val sw = resources.displayMetrics.widthPixels
+        val sh = resources.displayMetrics.heightPixels
+        val savedX = Prefs.posX(this)
+        val savedY = Prefs.posY(this)
+        buttonX = if (savedX >= 0) savedX.coerceIn(0, sw - sz) else sw - sz - dp(16)
+        buttonY = if (savedY >= 0) savedY.coerceIn(dp(40), sh - sz - dp(54)) else sh / 2
         startAsForeground()
         Prefs.registerListener(this, prefsListener)
         showCollapsed()
@@ -115,7 +124,7 @@ class FloatingButtonService : Service() {
 
     // ---------- collapsed ----------
     private fun showCollapsed() {
-        val size = dp(56)
+        val size = dp(Prefs.size(this))
         val button = ImageView(this).apply {
             background = circleBg(buttonColor())
             setImageResource(R.drawable.halo_rings)
@@ -133,17 +142,26 @@ class FloatingButtonService : Service() {
         var startX = 0; var startY = 0
         var touchX = 0f; var touchY = 0f
         var moved = false
+        var longFired = false
+        val longRunnable = Runnable { if (!moved) { longFired = true; doLongPress() } }
+
         button.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     startX = params.x; startY = params.y
-                    touchX = event.rawX; touchY = event.rawY; moved = false
+                    touchX = event.rawX; touchY = event.rawY
+                    moved = false; longFired = false
+                    cancelIdle()
+                    button.animate().alpha(buttonAlpha()).setDuration(120).start()
+                    handler.postDelayed(longRunnable, 450)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = (event.rawX - touchX).toInt()
                     val dy = (event.rawY - touchY).toInt()
-                    if (abs(dx) > 10 || abs(dy) > 10) moved = true
+                    if (abs(dx) > 10 || abs(dy) > 10) {
+                        moved = true; handler.removeCallbacks(longRunnable)
+                    }
                     val maxX = resources.displayMetrics.widthPixels - size
                     val maxY = resources.displayMetrics.heightPixels - size - dp(54)
                     params.x = (startX + dx).coerceIn(0, maxX)
@@ -151,9 +169,16 @@ class FloatingButtonService : Service() {
                     windowManager.updateViewLayout(button, params)
                     true
                 }
-                MotionEvent.ACTION_UP -> {
-                    buttonX = params.x; buttonY = params.y
-                    if (!moved) expand()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    handler.removeCallbacks(longRunnable)
+                    when {
+                        longFired -> {
+                            buttonX = params.x; buttonY = params.y
+                            Prefs.setPos(this, buttonX, buttonY); scheduleIdle()
+                        }
+                        moved -> snapToEdge(button, params, size)
+                        else -> { buttonX = params.x; buttonY = params.y; expand() }
+                    }
                     true
                 }
                 else -> false
@@ -162,6 +187,47 @@ class FloatingButtonService : Service() {
 
         windowManager.addView(button, params)
         collapsedView = button
+        scheduleIdle()
+    }
+
+    private fun snapToEdge(view: View, params: WindowManager.LayoutParams, size: Int) {
+        val screenW = resources.displayMetrics.widthPixels
+        val targetX = if (params.x + size / 2 < screenW / 2) 0 else screenW - size
+        val anim = android.animation.ValueAnimator.ofInt(params.x, targetX).apply {
+            duration = 180
+            addUpdateListener {
+                params.x = it.animatedValue as Int
+                runCatching { windowManager.updateViewLayout(view, params) }
+            }
+        }
+        anim.addListener(object : android.animation.AnimatorListenerAdapter() {
+            override fun onAnimationEnd(a: android.animation.Animator) {
+                buttonX = targetX; buttonY = params.y
+                Prefs.setPos(this@FloatingButtonService, buttonX, buttonY)
+                scheduleIdle()
+            }
+        })
+        anim.start()
+    }
+
+    private fun idleAlpha() = (buttonAlpha() * 0.5f).coerceAtLeast(0.12f)
+
+    private fun scheduleIdle() {
+        cancelIdle()
+        val r = Runnable {
+            if (!isOpen) collapsedView?.animate()?.alpha(idleAlpha())?.setDuration(500)?.start()
+        }
+        idleRunnable = r
+        handler.postDelayed(r, 3000)
+    }
+
+    private fun cancelIdle() {
+        idleRunnable?.let { handler.removeCallbacks(it) }
+    }
+
+    private fun doLongPress() {
+        collapsedView?.animate()?.alpha(buttonAlpha())?.setDuration(120)?.start()
+        performAction(Prefs.longPress(this))
     }
 
     private fun refreshCollapsed() {
@@ -180,8 +246,9 @@ class FloatingButtonService : Service() {
         val color = buttonColor()
         val screenW = resources.displayMetrics.widthPixels
         val screenH = resources.displayMetrics.heightPixels
-        val s = dp(56)
+        val s = dp(Prefs.size(this))
         val sat = dp(44)
+        val animViews = ArrayList<View>()
         val cx = buttonX + s / 2
         val cy = buttonY + s / 2
 
@@ -283,12 +350,14 @@ class FloatingButtonService : Service() {
                 val topM = clamp((satCy - sat / 2).toInt(), dp(40), screenH - sat - dp(28))
                 root.addView(column, FrameLayout.LayoutParams(colW, FrameLayout.LayoutParams.WRAP_CONTENT)
                     .apply { leftMargin = leftM; topMargin = topM })
+                animViews.add(column)
             } else {
                 circle.setOnClickListener { onSlot(def, circle, icon, color) }
                 val leftM = clamp((satCx - sat / 2).toInt(), dp(8), screenW - sat - dp(8))
                 val topM = clamp((satCy - sat / 2).toInt(), dp(40), screenH - sat - dp(8))
                 root.addView(circle, FrameLayout.LayoutParams(sat, sat)
                     .apply { leftMargin = leftM; topMargin = topM })
+                animViews.add(circle)
             }
         }
 
@@ -389,8 +458,31 @@ class FloatingButtonService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply { gravity = Gravity.TOP or Gravity.START; x = 0; y = 0 }
 
+        // open animation: scrim fades, actions pop out with a stagger
+        scrim.alpha = 0f
+        centre.alpha = 0f
+        bar.alpha = 0f
+        animViews.forEach { it.alpha = 0f }
+
         windowManager.addView(root, params)
         expandedRoot = root
+
+        root.post {
+            scrim.animate().alpha(1f).setDuration(140).start()
+            centre.pivotX = centre.width / 2f; centre.pivotY = centre.height / 2f
+            centre.scaleX = 0.5f; centre.scaleY = 0.5f
+            centre.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(160).start()
+            animViews.forEachIndexed { i, v ->
+                v.pivotX = v.width / 2f; v.pivotY = v.height / 2f
+                v.scaleX = 0.4f; v.scaleY = 0.4f
+                v.animate().alpha(1f).scaleX(1f).scaleY(1f)
+                    .setStartDelay(40L + i * 28L).setDuration(170).start()
+            }
+            bar.pivotX = bar.width / 2f; bar.pivotY = bar.height / 2f
+            bar.scaleX = 0.7f; bar.scaleY = 0.7f
+            bar.animate().alpha(1f).scaleX(1f).scaleY(1f)
+                .setStartDelay(150L).setDuration(170).start()
+        }
     }
 
     private fun circleButton(iconRes: Int): FrameLayout {
@@ -442,38 +534,56 @@ class FloatingButtonService : Service() {
 
     // ---------- actions ----------
     private fun onSlot(def: String, satView: FrameLayout, iconView: ImageView, color: Int) {
-        if (def.startsWith("app:")) { launchApp(def.substring(4)); return }
-        when (def) {
-            "torch" -> toggleTorch(satView, iconView, color)
-            "settings" -> {
-                startActivity(Intent(this, SettingsActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                collapse()
-            }
-            "lock" -> {
-                val svc = HaloAccessibilityService.instance
-                if (svc == null) { promptAccessibility(); collapse(); return }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    svc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN)
-                }
-                collapse()
-            }
-            "shot" -> {
-                val svc = HaloAccessibilityService.instance
-                if (svc == null) { promptAccessibility(); collapse(); return }
-                collapse()
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    handler.postDelayed({
-                        svc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)
-                    }, 350)
-                } else {
-                    toast("Screenshot needs Android 11+")
+        when {
+            def.startsWith("app:") -> { launchAppNoCollapse(def.substring(4)); collapse() }
+            def == "torch" -> {
+                val on = toggleTorchCore()
+                if (on != null) {
+                    satView.background = circleBg(if (on) color else Color.WHITE)
+                    iconView.setColorFilter(if (on) Color.WHITE else ink)
                 }
             }
+            def == "settings" -> { openSettingsScreen(); collapse() }
+            def == "lock" -> { lockAction(); collapse() }
+            def == "shot" -> { collapse(); screenshotAction() }
         }
     }
 
-    private fun launchApp(pkg: String) {
+    /** Runs an action by id — shared by a slot tap and the long-press shortcut. */
+    private fun performAction(id: String) {
+        when {
+            id == "nothing" -> {}
+            id == "torch" -> { val on = toggleTorchCore(); if (on != null) toast("Torch ${if (on) "on" else "off"}") }
+            id == "shot" -> screenshotAction()
+            id == "lock" -> lockAction()
+            id == "settings" -> openSettingsScreen()
+            id.startsWith("app:") -> launchAppNoCollapse(id.substring(4))
+        }
+    }
+
+    private fun openSettingsScreen() {
+        startActivity(Intent(this, SettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
+    private fun lockAction() {
+        val svc = HaloAccessibilityService.instance ?: run { promptAccessibility(); return }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            svc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN)
+        }
+    }
+
+    private fun screenshotAction() {
+        val svc = HaloAccessibilityService.instance ?: run { promptAccessibility(); return }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            handler.postDelayed({
+                svc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)
+            }, 350)
+        } else {
+            toast("Screenshot needs Android 11+")
+        }
+    }
+
+    private fun launchAppNoCollapse(pkg: String) {
         val launch = packageManager.getLaunchIntentForPackage(pkg)
         if (launch != null) {
             launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -481,20 +591,18 @@ class FloatingButtonService : Service() {
         } else {
             toast("Can't open that app")
         }
-        collapse()
     }
 
-    private fun toggleTorch(satView: FrameLayout, iconView: ImageView, color: Int) {
-        val id = flashCameraId()
-        if (id == null) { toast("No flashlight on this device"); return }
-        try {
+    private fun toggleTorchCore(): Boolean? {
+        val id = flashCameraId() ?: run { toast("No flashlight on this device"); return null }
+        return try {
             torchOn = !torchOn
             cameraManager.setTorchMode(id, torchOn)
-            satView.background = circleBg(if (torchOn) color else Color.WHITE)
-            iconView.setColorFilter(if (torchOn) Color.WHITE else ink)
+            torchOn
         } catch (e: Exception) {
             torchOn = false
             toast("Torch unavailable right now")
+            null
         }
     }
 
@@ -517,6 +625,7 @@ class FloatingButtonService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        cancelIdle()
         Prefs.unregisterListener(this, prefsListener)
         collapsedView?.let { runCatching { windowManager.removeView(it) } }
         expandedRoot?.let { runCatching { windowManager.removeView(it) } }

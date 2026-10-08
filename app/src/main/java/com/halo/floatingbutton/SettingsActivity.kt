@@ -17,6 +17,9 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -28,16 +31,18 @@ class SettingsActivity : AppCompatActivity() {
     private val faint = Color.parseColor("#8B96A5")
     private val cardBg = Color.parseColor("#F4F6F9")
 
-    private var currentColor = Prefs.ORANGE
-    private var currentAlpha = 85
+    private var currentColor = Prefs.GREY
+    private var currentAlpha = 40
 
     private lateinit var previewCircle: FrameLayout
     private val slotValueViews = arrayOfNulls<TextView>(4)
     private val swatchRings = HashMap<Int, FrameLayout>()
+    private var lpValueView: TextView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         title = "Customise Halo"
+        Prefs.seedDefaults(this)
         currentColor = Prefs.rawColor(this)
         currentAlpha = Prefs.alpha(this)
 
@@ -57,6 +62,9 @@ class SettingsActivity : AppCompatActivity() {
         root.addView(previewWrap, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(96)))
 
+        root.addView(sectionLabel("Button size"))
+        root.addView(buildSizeSlider())
+
         root.addView(sectionLabel("Transparency"))
         root.addView(buildTransparency())
 
@@ -69,6 +77,12 @@ class SettingsActivity : AppCompatActivity() {
         root.addView(sectionLabel("Button actions — tap a slot to change"))
         for (i in 0..3) root.addView(buildSlotRow(i))
 
+        root.addView(sectionLabel("Long-press the button"))
+        root.addView(buildLongPressRow())
+
+        root.addView(sectionLabel("Behaviour"))
+        root.addView(buildBootToggle())
+
         val note = TextView(this).apply {
             text = "Changes apply to the floating button straight away."
             textSize = 12f
@@ -76,6 +90,9 @@ class SettingsActivity : AppCompatActivity() {
             setPadding(dp(2), dp(18), dp(2), 0)
         }
         root.addView(note)
+
+        root.addView(sectionLabel("Updates"))
+        root.addView(buildUpdateRow())
 
         root.addView(sectionLabel("About"))
         root.addView(buildAbout())
@@ -123,6 +140,7 @@ class SettingsActivity : AppCompatActivity() {
     // ---------- colour ----------
     private val colours: List<Pair<String, Int>> = listOf(
         "System" to Prefs.SYSTEM_COLOR,
+        "Grey" to Prefs.GREY,
         "Orange" to Prefs.ORANGE,
         "Blue" to 0xFF2D6CDF.toInt(),
         "Teal" to 0xFF0E9AA7.toInt(),
@@ -356,6 +374,181 @@ class SettingsActivity : AppCompatActivity() {
         box.addView(emailLabel)
         box.addView(email)
         return box
+    }
+
+    // ---------- button size ----------
+    private fun buildSizeSlider(): View {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val size0 = Prefs.size(this)
+        val value = TextView(this).apply {
+            text = "${size0}dp"
+            textSize = 14f
+            setTextColor(ink)
+            setPadding(0, 0, 0, dp(6))
+        }
+        val seek = SeekBar(this).apply {
+            max = 32  // 44..76
+            progress = (size0 - 44).coerceIn(0, 32)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                    val v = p + 44
+                    value.text = "${v}dp"
+                    Prefs.setSize(this@SettingsActivity, v)
+                }
+                override fun onStartTrackingTouch(sb: SeekBar?) {}
+                override fun onStopTrackingTouch(sb: SeekBar?) {}
+            })
+        }
+        row.addView(value)
+        row.addView(seek)
+        return row
+    }
+
+    // ---------- long-press ----------
+    private fun lpLabel(def: String) = if (def == "nothing") "Nothing" else slotLabel(def)
+
+    private fun buildLongPressRow(): View {
+        val row = cardRow()
+        val name = TextView(this).apply {
+            text = "Action"; textSize = 12f; setTextColor(faint)
+        }
+        val value = TextView(this).apply {
+            text = lpLabel(Prefs.longPress(this@SettingsActivity))
+            textSize = 15f; setTextColor(ink); setPadding(dp(12), 0, dp(12), 0)
+        }
+        lpValueView = value
+        val change = TextView(this).apply {
+            text = "Change ›"; textSize = 13f; setTextColor(Prefs.ORANGE)
+        }
+        row.addView(name)
+        row.addView(value, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(change)
+        row.setOnClickListener { chooseLongPress() }
+        return wrap(row)
+    }
+
+    private fun chooseLongPress() {
+        val options = arrayOf("Torch", "Screenshot", "Lock", "Settings", "Choose an app…", "Nothing")
+        AlertDialog.Builder(this)
+            .setTitle("Long-press action")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> setLp("torch"); 1 -> setLp("shot"); 2 -> setLp("lock")
+                    3 -> setLp("settings"); 4 -> chooseLpApp(); 5 -> setLp("nothing")
+                }
+            }.show()
+    }
+
+    private fun chooseLpApp() {
+        val pm = packageManager
+        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val apps = pm.queryIntentActivities(intent, 0)
+            .map { (it.loadLabel(pm)?.toString() ?: it.activityInfo.packageName) to it.activityInfo.packageName }
+            .distinctBy { it.second }.sortedBy { it.first.lowercase() }
+        if (apps.isEmpty()) return
+        AlertDialog.Builder(this)
+            .setTitle("Choose an app")
+            .setItems(apps.map { it.first }.toTypedArray()) { _, w -> setLp("app:" + apps[w].second) }
+            .show()
+    }
+
+    private fun setLp(v: String) {
+        Prefs.setLongPress(this, v)
+        lpValueView?.text = lpLabel(v)
+    }
+
+    // ---------- start on boot ----------
+    private fun buildBootToggle(): View {
+        val row = cardRow()
+        val label = TextView(this).apply {
+            text = "Start on boot"; textSize = 15f; setTextColor(ink)
+        }
+        val sw = android.widget.Switch(this).apply {
+            isChecked = Prefs.boot(this@SettingsActivity)
+            setOnCheckedChangeListener { _, c -> Prefs.setBoot(this@SettingsActivity, c) }
+        }
+        row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(sw)
+        return wrap(row)
+    }
+
+    // ---------- updates ----------
+    private fun buildUpdateRow(): View {
+        val current = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (e: Exception) { "?" }
+        val row = cardRow()
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(TextView(this).apply { text = "Check for updates"; textSize = 15f; setTextColor(ink) })
+        col.addView(TextView(this).apply {
+            text = "You're on v$current"; textSize = 11f; setTextColor(faint)
+        })
+        val go = TextView(this).apply { text = "Check ›"; textSize = 13f; setTextColor(Prefs.ORANGE) }
+        row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(go)
+        row.setOnClickListener { checkForUpdates(current) }
+        return wrap(row)
+    }
+
+    private fun checkForUpdates(current: String) {
+        android.widget.Toast.makeText(this, "Checking…", android.widget.Toast.LENGTH_SHORT).show()
+        Thread {
+            val latest = fetchLatestVersion()
+            runOnUiThread {
+                when {
+                    latest == null -> {
+                        android.widget.Toast.makeText(this, "Couldn't check — opening download page", android.widget.Toast.LENGTH_SHORT).show()
+                        openUrl("https://github.com/Jagjipru/halo-floating-button/releases/latest")
+                    }
+                    isNewer(latest, current) -> {
+                        android.widget.Toast.makeText(this, "Update available: v$latest", android.widget.Toast.LENGTH_LONG).show()
+                        openUrl("https://github.com/Jagjipru/halo-floating-button/releases/latest/download/Halo.apk")
+                    }
+                    else -> android.widget.Toast.makeText(this, "You're on the latest (v$current)", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }.start()
+    }
+
+    private fun fetchLatestVersion(): String? = try {
+        val url = URL("https://api.github.com/repos/Jagjipru/halo-floating-button/releases/latest")
+        val conn = (url.openConnection() as HttpURLConnection).apply {
+            connectTimeout = 7000; readTimeout = 7000
+            setRequestProperty("Accept", "application/vnd.github+json")
+        }
+        if (conn.responseCode in 200..299) {
+            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            val obj = JSONObject(body)
+            val name = obj.optString("name") + " " + obj.optString("tag_name")
+            Regex("(\\d+\\.\\d+(?:\\.\\d+)?)").find(name)?.groupValues?.get(1)
+        } else null
+    } catch (e: Exception) { null }
+
+    private fun isNewer(latest: String, current: String): Boolean {
+        fun parts(s: String) = s.split(".").map { it.toIntOrNull() ?: 0 }
+        val a = parts(latest); val b = parts(current)
+        for (i in 0 until maxOf(a.size, b.size)) {
+            val x = a.getOrElse(i) { 0 }; val y = b.getOrElse(i) { 0 }
+            if (x != y) return x > y
+        }
+        return false
+    }
+
+    private fun openUrl(u: String) {
+        try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u))) } catch (e: Exception) {}
+    }
+
+    // shared card row helpers
+    private fun cardRow() = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE; setColor(cardBg); cornerRadius = dp(13).toFloat()
+        }
+        setPadding(dp(14), dp(11), dp(14), dp(11))
+    }
+
+    private fun wrap(inner: View) = LinearLayout(this).apply {
+        addView(inner, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     }
 
     // ---------- preview ----------

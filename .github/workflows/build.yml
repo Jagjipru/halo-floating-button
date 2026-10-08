@@ -59,9 +59,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          VER=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts | head -1)
           cp app/build/outputs/apk/debug/app-debug.apk Halo.apk
           gh release delete latest -y --cleanup-tag 2>/dev/null || true
           gh release create latest Halo.apk \
-            --title "Halo (latest build)" \
-            --notes "Latest Halo APK. Download Halo.apk below and install on your phone." \
+            --title "Halo v$VER" \
+            --notes "version: $VER" \
             --target main

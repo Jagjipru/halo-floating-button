@@ -22,6 +22,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Prefs.seedDefaults(this)
 
         val dp = resources.displayMetrics.density
         fun px(v: Int) = (v * dp).toInt()
