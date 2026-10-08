@@ -885,7 +885,16 @@ class FloatingButtonService : Service() {
 
     private fun scheduleUnhideAlarm(until: Long) {
         val am = getSystemService(AlarmManager::class.java)
-        runCatching { am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, until, unhidePendingIntent()) }
+        // setAlarmClock fires at the exact time even in Doze, and needs no
+        // special "exact alarm" permission (unlike setExactAndAllowWhileIdle).
+        val show = PendingIntent.getActivity(
+            this, 9,
+            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        runCatching {
+            am.setAlarmClock(AlarmManager.AlarmClockInfo(until, show), unhidePendingIntent())
+        }
     }
 
     private fun cancelUnhideAlarm() {
