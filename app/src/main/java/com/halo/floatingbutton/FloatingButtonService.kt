@@ -137,7 +137,7 @@ class FloatingButtonService : Service() {
         val b = Notification.Builder(this, channelId)
             .setContentTitle("Halo")
             .setContentText(if (isHidden) "Hidden — tap to show" else "Floating button is active")
-            .setSmallIcon(R.drawable.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
         if (isHidden) b.setContentIntent(tap)
         return b.build()
     }
