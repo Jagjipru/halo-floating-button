@@ -4,6 +4,7 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -62,6 +63,9 @@ class SettingsActivity : AppCompatActivity() {
         root.addView(sectionLabel("Button colour"))
         root.addView(buildColours())
 
+        root.addView(sectionLabel("Labels"))
+        root.addView(buildLabelsToggle())
+
         root.addView(sectionLabel("Button actions — tap a slot to change"))
         for (i in 0..3) root.addView(buildSlotRow(i))
 
@@ -72,6 +76,9 @@ class SettingsActivity : AppCompatActivity() {
             setPadding(dp(2), dp(18), dp(2), 0)
         }
         root.addView(note)
+
+        root.addView(sectionLabel("About"))
+        root.addView(buildAbout())
 
         scroll.addView(root)
         setContentView(scroll)
@@ -272,6 +279,83 @@ class SettingsActivity : AppCompatActivity() {
         packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
     } catch (e: Exception) {
         pkg
+    }
+
+    // ---------- labels toggle ----------
+    private fun buildLabelsToggle(): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                setColor(cardBg)
+                cornerRadius = dp(13).toFloat()
+            }
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+        }
+        val label = TextView(this).apply {
+            text = "Show labels under icons"
+            textSize = 15f
+            setTextColor(ink)
+        }
+        val sw = android.widget.Switch(this).apply {
+            isChecked = Prefs.labels(this@SettingsActivity)
+            setOnCheckedChangeListener { _, checked ->
+                Prefs.setLabels(this@SettingsActivity, checked)
+            }
+        }
+        row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(sw)
+        return row
+    }
+
+    // ---------- about ----------
+    private fun buildAbout(): View {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                setColor(cardBg)
+                cornerRadius = dp(13).toFloat()
+            }
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+        }
+        val creator = TextView(this).apply {
+            text = "Created by Jagjit Singh"
+            textSize = 16f
+            setTextColor(ink)
+        }
+        val tagline = TextView(this).apply {
+            text = "Halo — a personal floating control button"
+            textSize = 12f
+            setTextColor(muted)
+            setPadding(0, dp(4), 0, dp(14))
+        }
+        val emailLabel = TextView(this).apply {
+            text = "Suggestions & bugs"
+            textSize = 12f
+            setTextColor(faint)
+        }
+        val email = TextView(this).apply {
+            text = "jagjitsinghpruthi@gmail.com"
+            textSize = 15f
+            setTextColor(Prefs.ORANGE)
+            setPadding(0, dp(2), 0, 0)
+            setOnClickListener {
+                val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:jagjitsinghpruthi@gmail.com"))
+                    .putExtra(Intent.EXTRA_SUBJECT, "Halo — feedback")
+                try {
+                    startActivity(Intent.createChooser(intent, "Send email"))
+                } catch (e: Exception) {
+                    // no email app available
+                }
+            }
+        }
+        box.addView(creator)
+        box.addView(tagline)
+        box.addView(emailLabel)
+        box.addView(email)
+        return box
     }
 
     // ---------- preview ----------

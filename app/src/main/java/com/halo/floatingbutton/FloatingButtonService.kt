@@ -20,6 +20,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -27,6 +28,7 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -224,19 +226,22 @@ class FloatingButtonService : Service() {
         })
 
         // satellites
+        val showLabels = Prefs.labels(this)
         for (i in 0..3) {
             val def = Prefs.slot(this, i)
-            val container = FrameLayout(this)
+            val circle = FrameLayout(this)
             val icon = ImageView(this)
             val isApp = def.startsWith("app:")
             val torchActive = def == "torch" && torchOn
 
-            container.background = circleBg(if (torchActive) color else Color.WHITE)
+            circle.background = circleBg(if (torchActive) color else Color.WHITE)
+            val labelText: String
             if (isApp) {
                 val pkg = def.substring(4)
                 val d = runCatching { packageManager.getApplicationIcon(pkg) }.getOrNull()
                 if (d != null) icon.setImageDrawable(d)
                 else { icon.setImageResource(R.drawable.ic_settings); icon.setColorFilter(ink) }
+                labelText = appLabel(pkg)
             } else {
                 val res = when (def) {
                     "torch" -> R.drawable.ic_torch
@@ -246,31 +251,56 @@ class FloatingButtonService : Service() {
                 }
                 icon.setImageResource(res)
                 icon.setColorFilter(if (torchActive) Color.WHITE else ink)
+                labelText = when (def) {
+                    "torch" -> "Torch"; "shot" -> "Screenshot"; "lock" -> "Lock"; else -> "Settings"
+                }
             }
             val iconSize = if (isApp) dp(28) else dp(22)
-            container.addView(icon, FrameLayout.LayoutParams(iconSize, iconSize, Gravity.CENTER))
-            container.setOnClickListener { onSlot(def, container, icon, color) }
+            circle.addView(icon, FrameLayout.LayoutParams(iconSize, iconSize, Gravity.CENTER))
 
             val satCx = cx + offsets[i].first
             val satCy = cy + offsets[i].second
-            val leftM = clamp((satCx - sat / 2).toInt(), dp(8), screenW - sat - dp(8))
-            val topM = clamp((satCy - sat / 2).toInt(), dp(30), screenH - sat - dp(8))
-            root.addView(container, FrameLayout.LayoutParams(sat, sat).apply {
-                leftMargin = leftM; topMargin = topM
-            })
+
+            if (showLabels) {
+                val colW = dp(64)
+                val column = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER_HORIZONTAL
+                }
+                column.addView(circle, LinearLayout.LayoutParams(sat, sat))
+                column.addView(satLabel(labelText))
+                column.setOnClickListener { onSlot(def, circle, icon, color) }
+                val leftM = clamp((satCx - colW / 2).toInt(), dp(6), screenW - colW - dp(6))
+                val topM = clamp((satCy - sat / 2).toInt(), dp(30), screenH - sat - dp(28))
+                root.addView(column, FrameLayout.LayoutParams(colW, FrameLayout.LayoutParams.WRAP_CONTENT)
+                    .apply { leftMargin = leftM; topMargin = topM })
+            } else {
+                circle.setOnClickListener { onSlot(def, circle, icon, color) }
+                val leftM = clamp((satCx - sat / 2).toInt(), dp(8), screenW - sat - dp(8))
+                val topM = clamp((satCy - sat / 2).toInt(), dp(30), screenH - sat - dp(8))
+                root.addView(circle, FrameLayout.LayoutParams(sat, sat)
+                    .apply { leftMargin = leftM; topMargin = topM })
+            }
         }
 
-        // volume bar with slide-to-set
-        val barW = dp(190)
+        // volume bar: speaker icon, −, slide track, +, live %
+        val barW = dp(232)
         val barH = dp(46)
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             background = roundBg(Color.WHITE, dp(23).toFloat())
-            setPadding(dp(6), dp(6), dp(6), dp(6))
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+        }
+
+        val speaker = ImageView(this).apply {
+            setImageResource(R.drawable.ic_volume); setColorFilter(ink)
         }
         val minus = circleButton(R.drawable.ic_minus)
         val plus = circleButton(R.drawable.ic_plus)
+        val percent = TextView(this).apply {
+            setTextColor(ink); textSize = 12f; gravity = Gravity.CENTER
+        }
 
         val fill = View(this).apply { background = roundBg(color, dp(3).toFloat()) }
         val spacer = View(this)
@@ -285,50 +315,52 @@ class FloatingButtonService : Service() {
         touchArea.addView(barInner, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, dp(6), Gravity.CENTER_VERTICAL))
 
-        val updateFill = {
+        val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+        val updateVol = {
             val vol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-            val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
             (fill.layoutParams as LinearLayout.LayoutParams).weight = vol.toFloat()
-            (spacer.layoutParams as LinearLayout.LayoutParams).weight = (max - vol).toFloat()
+            (spacer.layoutParams as LinearLayout.LayoutParams).weight = (maxVol - vol).toFloat()
             fill.requestLayout(); spacer.requestLayout()
-        }
-        val setFromX = { x: Float, width: Int ->
-            if (width > 0) {
-                val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
-                val frac = (x / width).coerceIn(0f, 1f)
-                val vol = (frac * max).roundToInt()
-                runCatching {
-                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, vol, 0)
-                }
-                updateFill()
-            }
+            percent.text = "${vol * 100 / maxVol}%"
         }
         touchArea.setOnTouchListener { v, e ->
             when (e.action) {
-                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> { setFromX(e.x, v.width); true }
-                MotionEvent.ACTION_UP -> true
-                else -> false
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                    if (v.width > 0) {
+                        val frac = (e.x / v.width).coerceIn(0f, 1f)
+                        runCatching {
+                            audioManager.setStreamVolume(
+                                AudioManager.STREAM_MUSIC, (frac * maxVol).roundToInt(), 0)
+                        }
+                        updateVol()
+                    }
+                    true
+                }
+                else -> true
             }
         }
-        updateFill()
-        minus.setOnClickListener {
+        holdRepeat(minus) {
             runCatching {
                 audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, 0)
             }
-            updateFill()
+            updateVol()
         }
-        plus.setOnClickListener {
+        holdRepeat(plus) {
             runCatching {
                 audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, 0)
             }
-            updateFill()
+            updateVol()
         }
+        updateVol()
 
-        bar.addView(minus, LinearLayout.LayoutParams(dp(32), dp(32)))
+        bar.addView(speaker, LinearLayout.LayoutParams(dp(20), dp(20)).apply { rightMargin = dp(8) })
+        bar.addView(minus, LinearLayout.LayoutParams(dp(30), dp(30)))
         bar.addView(touchArea, LinearLayout.LayoutParams(0, dp(30), 1f).apply {
-            leftMargin = dp(6); rightMargin = dp(6)
+            leftMargin = dp(8); rightMargin = dp(8)
         })
-        bar.addView(plus, LinearLayout.LayoutParams(dp(32), dp(32)))
+        bar.addView(plus, LinearLayout.LayoutParams(dp(30), dp(30)))
+        bar.addView(percent, LinearLayout.LayoutParams(dp(42), LinearLayout.LayoutParams.WRAP_CONTENT)
+            .apply { leftMargin = dp(6) })
 
         val vLeft = clamp((cx - barW / 2), dp(8), screenW - barW - dp(8))
         val vTop = clamp(
@@ -357,6 +389,38 @@ class FloatingButtonService : Service() {
         fl.addView(icon, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER))
         return fl
     }
+
+    /** Fires [action] on press, then repeats while the finger is held down. */
+    private fun holdRepeat(view: View, action: () -> Unit) {
+        val repeater = object : Runnable {
+            override fun run() { action(); handler.postDelayed(this, 80) }
+        }
+        view.setOnTouchListener { _, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> { action(); handler.postDelayed(repeater, 400); true }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    handler.removeCallbacks(repeater); true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun satLabel(text: String): TextView = TextView(this).apply {
+        this.text = text
+        setTextColor(Color.WHITE)
+        textSize = 9f
+        maxLines = 1
+        ellipsize = TextUtils.TruncateAt.END
+        gravity = Gravity.CENTER
+        setShadowLayer(3f, 0f, 1f, Color.parseColor("#CC000000"))
+        layoutParams = LinearLayout.LayoutParams(dp(62), LinearLayout.LayoutParams.WRAP_CONTENT)
+            .apply { topMargin = dp(3) }
+    }
+
+    private fun appLabel(pkg: String): String = try {
+        packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+    } catch (e: Exception) { pkg }
 
     private fun collapse() {
         if (!isOpen) return

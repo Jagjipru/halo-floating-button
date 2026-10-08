@@ -18,8 +18,13 @@ object Prefs {
 
     private fun sp(c: Context) = c.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
+    const val KEY_LABELS = "labels"
+
     fun alpha(c: Context) = sp(c).getInt(KEY_ALPHA, 85)
     fun setAlpha(c: Context, v: Int) = sp(c).edit().putInt(KEY_ALPHA, v).apply()
+
+    fun labels(c: Context) = sp(c).getBoolean(KEY_LABELS, false)
+    fun setLabels(c: Context, v: Boolean) = sp(c).edit().putBoolean(KEY_LABELS, v).apply()
 
     fun rawColor(c: Context) = sp(c).getInt(KEY_COLOR, ORANGE)
     fun setColor(c: Context, v: Int) = sp(c).edit().putInt(KEY_COLOR, v).apply()
