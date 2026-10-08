@@ -15,6 +15,8 @@ object Prefs {
     const val KEY_SIZE = "size"         // button diameter in dp
     const val KEY_BOOT = "boot"
     const val KEY_LONGPRESS = "longpress"
+    const val KEY_SNAP = "snap"
+    const val KEY_ANIM = "anim"
     private const val KEY_SEEDED = "seeded_v1"
 
     const val SYSTEM_COLOR = 0           // sentinel: follow the device accent
@@ -66,6 +68,13 @@ object Prefs {
 
     fun longPress(c: Context): String = sp(c).getString(KEY_LONGPRESS, "lock") ?: "lock"
     fun setLongPress(c: Context, v: String) = sp(c).edit().putString(KEY_LONGPRESS, v).apply()
+
+    fun snap(c: Context) = sp(c).getBoolean(KEY_SNAP, true)
+    fun setSnap(c: Context, v: Boolean) = sp(c).edit().putBoolean(KEY_SNAP, v).apply()
+
+    // "pop", "spring", "scale", "none"
+    fun anim(c: Context): String = sp(c).getString(KEY_ANIM, "pop") ?: "pop"
+    fun setAnim(c: Context, v: String) = sp(c).edit().putString(KEY_ANIM, v).apply()
 
     /** One-time: apply the grey / 40% default even to existing installs. */
     fun seedDefaults(c: Context) {

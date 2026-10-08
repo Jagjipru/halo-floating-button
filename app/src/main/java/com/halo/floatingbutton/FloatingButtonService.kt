@@ -176,7 +176,14 @@ class FloatingButtonService : Service() {
                             buttonX = params.x; buttonY = params.y
                             Prefs.setPos(this, buttonX, buttonY); scheduleIdle()
                         }
-                        moved -> snapToEdge(button, params, size)
+                        moved -> {
+                            if (Prefs.snap(this)) {
+                                snapToEdge(button, params, size)
+                            } else {
+                                buttonX = params.x; buttonY = params.y
+                                Prefs.setPos(this, buttonX, buttonY); scheduleIdle()
+                            }
+                        }
                         else -> { buttonX = params.x; buttonY = params.y; expand() }
                     }
                     true
@@ -191,18 +198,32 @@ class FloatingButtonService : Service() {
     }
 
     private fun snapToEdge(view: View, params: WindowManager.LayoutParams, size: Int) {
-        val screenW = resources.displayMetrics.widthPixels
-        val targetX = if (params.x + size / 2 < screenW / 2) 0 else screenW - size
-        val anim = android.animation.ValueAnimator.ofInt(params.x, targetX).apply {
+        val sw = resources.displayMetrics.widthPixels
+        val sh = resources.displayMetrics.heightPixels
+        val cx = params.x + size / 2
+        val cy = params.y + size / 2
+        val dLeft = cx; val dRight = sw - cx; val dTop = cy; val dBottom = sh - cy
+        val minD = minOf(dLeft, dRight, dTop, dBottom)
+        var tx = params.x; var ty = params.y
+        when (minD) {
+            dLeft -> tx = 0
+            dRight -> tx = sw - size
+            dTop -> ty = dp(40)
+            else -> ty = sh - size - dp(54)
+        }
+        val sx = params.x; val sy = params.y
+        val anim = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 180
             addUpdateListener {
-                params.x = it.animatedValue as Int
+                val f = it.animatedValue as Float
+                params.x = (sx + (tx - sx) * f).toInt()
+                params.y = (sy + (ty - sy) * f).toInt()
                 runCatching { windowManager.updateViewLayout(view, params) }
             }
         }
         anim.addListener(object : android.animation.AnimatorListenerAdapter() {
             override fun onAnimationEnd(a: android.animation.Animator) {
-                buttonX = targetX; buttonY = params.y
+                buttonX = tx; buttonY = ty
                 Prefs.setPos(this@FloatingButtonService, buttonX, buttonY)
                 scheduleIdle()
             }
@@ -458,31 +479,45 @@ class FloatingButtonService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply { gravity = Gravity.TOP or Gravity.START; x = 0; y = 0 }
 
-        // open animation: scrim fades, actions pop out with a stagger
-        scrim.alpha = 0f
-        centre.alpha = 0f
-        bar.alpha = 0f
-        animViews.forEach { it.alpha = 0f }
+        // open animation (style from settings)
+        val animStyle = Prefs.anim(this)
+        if (animStyle != "none") {
+            scrim.alpha = 0f; centre.alpha = 0f; bar.alpha = 0f
+            animViews.forEach { it.alpha = 0f }
+        }
 
         windowManager.addView(root, params)
         expandedRoot = root
 
-        root.post {
-            scrim.animate().alpha(1f).setDuration(140).start()
-            centre.pivotX = centre.width / 2f; centre.pivotY = centre.height / 2f
-            centre.scaleX = 0.5f; centre.scaleY = 0.5f
-            centre.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(160).start()
-            animViews.forEachIndexed { i, v ->
-                v.pivotX = v.width / 2f; v.pivotY = v.height / 2f
-                v.scaleX = 0.4f; v.scaleY = 0.4f
-                v.animate().alpha(1f).scaleX(1f).scaleY(1f)
-                    .setStartDelay(40L + i * 28L).setDuration(170).start()
-            }
-            bar.pivotX = bar.width / 2f; bar.pivotY = bar.height / 2f
-            bar.scaleX = 0.7f; bar.scaleY = 0.7f
-            bar.animate().alpha(1f).scaleX(1f).scaleY(1f)
-                .setStartDelay(150L).setDuration(170).start()
+        if (animStyle != "none") {
+            root.post { runOpenAnimation(animStyle, scrim, centre, bar, animViews) }
         }
+    }
+
+    private fun runOpenAnimation(style: String, scrim: View, centre: View, bar: View, sats: List<View>) {
+        scrim.animate().alpha(1f).setDuration(140).start()
+        if (style == "fade") {
+            centre.animate().alpha(1f).setDuration(200).start()
+            sats.forEachIndexed { i, v ->
+                v.animate().alpha(1f).setStartDelay(i * 18L).setDuration(200).start()
+            }
+            bar.animate().alpha(1f).setStartDelay(70L).setDuration(200).start()
+            return
+        }
+        val overshoot = style == "spring"
+        val interp = if (overshoot) android.view.animation.OvershootInterpolator(2.4f)
+                     else android.view.animation.DecelerateInterpolator()
+        val dur = if (overshoot) 280L else 170L
+        val stagger = if (style == "scale") 0L else 28L
+        fun pop(v: View, startScale: Float, delay: Long) {
+            v.pivotX = v.width / 2f; v.pivotY = v.height / 2f
+            v.scaleX = startScale; v.scaleY = startScale
+            v.animate().alpha(1f).scaleX(1f).scaleY(1f)
+                .setInterpolator(interp).setStartDelay(delay).setDuration(dur).start()
+        }
+        pop(centre, 0.5f, 0L)
+        sats.forEachIndexed { i, v -> pop(v, 0.4f, 40L + i * stagger) }
+        pop(bar, 0.7f, if (style == "scale") 0L else 150L)
     }
 
     private fun circleButton(iconRes: Int): FrameLayout {

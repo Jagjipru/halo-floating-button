@@ -37,8 +37,13 @@ class MainActivity : AppCompatActivity() {
             textSize = 30f
             setTextColor(Color.parseColor("#161A21"))
         }
+        val versionName = try {
+            packageManager.getPackageInfo(packageName, 0).versionName
+        } catch (e: Exception) {
+            ""
+        }
         val subtitle = TextView(this).apply {
-            text = "Floating button · Phase 3"
+            text = if (versionName.isNullOrBlank()) "Floating button" else "Floating button · v$versionName"
             textSize = 15f
             setTextColor(Color.parseColor("#5F6B7A"))
             setPadding(0, px(6), 0, px(28))
@@ -96,6 +101,51 @@ class MainActivity : AppCompatActivity() {
             ).apply { topMargin = px(10) }
         )
         root.addView(accessNote)
+
+        // ---------- About ----------
+        val aboutLabel = TextView(this).apply {
+            text = "ABOUT"
+            textSize = 12f
+            setTextColor(Color.parseColor("#8B96A5"))
+            setPadding(0, px(36), 0, px(10))
+        }
+        val creator = TextView(this).apply {
+            text = "Created by Jagjit Singh"
+            textSize = 16f
+            setTextColor(Color.parseColor("#161A21"))
+        }
+        val tagline = TextView(this).apply {
+            text = "Halo — a personal floating control button"
+            textSize = 12f
+            setTextColor(Color.parseColor("#8B96A5"))
+            setPadding(0, px(4), 0, px(14))
+        }
+        val emailLabel = TextView(this).apply {
+            text = "Suggestions & bugs"
+            textSize = 12f
+            setTextColor(Color.parseColor("#8B96A5"))
+        }
+        val email = TextView(this).apply {
+            text = "jagjitsinghpruthi@gmail.com"
+            textSize = 15f
+            setTextColor(Color.parseColor("#F2552C"))
+            setPadding(0, px(2), 0, 0)
+            setOnClickListener {
+                val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:jagjitsinghpruthi@gmail.com"))
+                    .putExtra(Intent.EXTRA_SUBJECT, "Halo — feedback")
+                try {
+                    startActivity(Intent.createChooser(intent, "Send email"))
+                } catch (e: Exception) {
+                    // no email app available
+                }
+            }
+        }
+        root.addView(aboutLabel)
+        root.addView(creator)
+        root.addView(tagline)
+        root.addView(emailLabel)
+        root.addView(email)
+
         setContentView(root)
     }
 
