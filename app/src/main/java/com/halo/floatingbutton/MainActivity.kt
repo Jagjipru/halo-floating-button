@@ -37,7 +37,7 @@ class MainActivity : AppCompatActivity() {
             setTextColor(Color.parseColor("#161A21"))
         }
         val subtitle = TextView(this).apply {
-            text = "Floating button · Phase 1"
+            text = "Floating button · Phase 2"
             textSize = 15f
             setTextColor(Color.parseColor("#5F6B7A"))
             setPadding(0, px(6), 0, px(28))
@@ -51,6 +51,19 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { onAction() }
         }
 
+        val accessBtn = Button(this).apply {
+            text = "Enable lock & screenshot (Accessibility)"
+            setOnClickListener {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+        }
+        val accessNote = TextView(this).apply {
+            text = "Optional. Torch and volume work without this. Lock and screenshot need Halo turned on under Accessibility."
+            textSize = 12f
+            setTextColor(Color.parseColor("#8B96A5"))
+            setPadding(0, px(10), 0, 0)
+        }
+
         root.addView(title)
         root.addView(subtitle)
         root.addView(status)
@@ -61,6 +74,14 @@ class MainActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         )
+        root.addView(
+            accessBtn,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = px(14) }
+        )
+        root.addView(accessNote)
         setContentView(root)
     }
 
