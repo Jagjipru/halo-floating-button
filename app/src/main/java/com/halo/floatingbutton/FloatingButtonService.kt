@@ -7,6 +7,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
@@ -28,6 +29,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.Toast
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 class FloatingButtonService : Service() {
 
@@ -47,9 +49,16 @@ class FloatingButtonService : Service() {
     private val density get() = resources.displayMetrics.density
     private fun dp(v: Int) = (v * density).toInt()
 
-    private val accent = Color.parseColor("#F2552C")
     private val ink = Color.parseColor("#161A21")
     private val light = Color.parseColor("#EDEFF3")
+
+    private fun buttonColor() = Prefs.resolvedColor(this)
+    private fun buttonAlpha() = Prefs.alpha(this) / 100f
+
+    private val prefsListener =
+        SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+            handler.post { if (!isOpen) refreshCollapsed() }
+        }
 
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
@@ -62,6 +71,7 @@ class FloatingButtonService : Service() {
         buttonX = resources.displayMetrics.widthPixels - dp(56) - dp(16)
         buttonY = resources.displayMetrics.heightPixels / 2
         startAsForeground()
+        Prefs.registerListener(this, prefsListener)
         showCollapsed()
     }
 
@@ -83,7 +93,6 @@ class FloatingButtonService : Service() {
         }
     }
 
-    // ---------- drawables ----------
     private fun circleBg(color: Int) = GradientDrawable().apply {
         shape = GradientDrawable.OVAL
         setColor(color)
@@ -102,12 +111,13 @@ class FloatingButtonService : Service() {
             @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
         }
 
-    // ---------- collapsed button ----------
+    // ---------- collapsed ----------
     private fun showCollapsed() {
         val size = dp(56)
         val button = ImageView(this).apply {
-            setImageResource(R.drawable.floating_button)
-            alpha = 0.85f
+            background = circleBg(buttonColor())
+            setImageResource(R.drawable.halo_rings)
+            alpha = buttonAlpha()
         }
         val params = WindowManager.LayoutParams(
             size, size, overlayType(),
@@ -115,14 +125,11 @@ class FloatingButtonService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = buttonX
-            y = buttonY
+            x = buttonX; y = buttonY
         }
 
-        var startX = 0
-        var startY = 0
-        var touchX = 0f
-        var touchY = 0f
+        var startX = 0; var startY = 0
+        var touchX = 0f; var touchY = 0f
         var moved = false
         button.setOnTouchListener { _, event ->
             when (event.action) {
@@ -152,13 +159,20 @@ class FloatingButtonService : Service() {
         collapsedView = button
     }
 
-    // ---------- expanded menu ----------
+    private fun refreshCollapsed() {
+        collapsedView?.let { runCatching { windowManager.removeView(it) } }
+        collapsedView = null
+        showCollapsed()
+    }
+
+    // ---------- expanded ----------
     private fun expand() {
         if (isOpen) return
         isOpen = true
         collapsedView?.let { runCatching { windowManager.removeView(it) } }
         collapsedView = null
 
+        val color = buttonColor()
         val screenW = resources.displayMetrics.widthPixels
         val screenH = resources.displayMetrics.heightPixels
         val s = dp(56)
@@ -168,8 +182,6 @@ class FloatingButtonService : Service() {
         val cy = buttonY + s / 2
 
         val root = FrameLayout(this)
-
-        // scrim
         val scrim = View(this).apply {
             setBackgroundColor(Color.parseColor("#5C000000"))
             setOnClickListener { collapse() }
@@ -177,8 +189,8 @@ class FloatingButtonService : Service() {
         root.addView(scrim, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
 
-        // centre button -> close
-        val centre = FrameLayout(this).apply { background = circleBg(accent) }
+        // centre close button
+        val centre = FrameLayout(this).apply { background = circleBg(color) }
         val closeIcon = ImageView(this).apply {
             setImageResource(R.drawable.ic_close); setColorFilter(Color.WHITE)
         }
@@ -188,23 +200,34 @@ class FloatingButtonService : Service() {
             leftMargin = buttonX; topMargin = buttonY
         })
 
-        // four satellites: NW, NE, SW, SE
+        // satellites
         val diag = listOf(-1 to -1, 1 to -1, -1 to 1, 1 to 1)
-        val defs = listOf(
-            R.drawable.ic_torch to "torch",
-            R.drawable.ic_screenshot to "shot",
-            R.drawable.ic_lock to "lock",
-            R.drawable.ic_settings to "settings"
-        )
-        defs.forEachIndexed { i, (iconRes, id) ->
-            val on = id == "torch" && torchOn
-            val container = FrameLayout(this).apply { background = circleBg(if (on) accent else Color.WHITE) }
-            val icon = ImageView(this).apply {
-                setImageResource(iconRes)
-                setColorFilter(if (on) Color.WHITE else ink)
+        for (i in 0..3) {
+            val def = Prefs.slot(this, i)
+            val container = FrameLayout(this)
+            val icon = ImageView(this)
+            val isApp = def.startsWith("app:")
+            val torchActive = def == "torch" && torchOn
+
+            container.background = circleBg(if (torchActive) color else Color.WHITE)
+            if (isApp) {
+                val pkg = def.substring(4)
+                val d = runCatching { packageManager.getApplicationIcon(pkg) }.getOrNull()
+                if (d != null) icon.setImageDrawable(d)
+                else { icon.setImageResource(R.drawable.ic_settings); icon.setColorFilter(ink) }
+            } else {
+                val res = when (def) {
+                    "torch" -> R.drawable.ic_torch
+                    "shot" -> R.drawable.ic_screenshot
+                    "lock" -> R.drawable.ic_lock
+                    else -> R.drawable.ic_settings
+                }
+                icon.setImageResource(res)
+                icon.setColorFilter(if (torchActive) Color.WHITE else ink)
             }
-            container.addView(icon, FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER))
-            container.setOnClickListener { onAction(id, container, icon) }
+            val iconSize = if (isApp) dp(28) else dp(22)
+            container.addView(icon, FrameLayout.LayoutParams(iconSize, iconSize, Gravity.CENTER))
+            container.setOnClickListener { onSlot(def, container, icon, color) }
 
             val satCx = cx + (diag[i].first * r)
             val satCy = cy + (diag[i].second * r)
@@ -215,8 +238,8 @@ class FloatingButtonService : Service() {
             })
         }
 
-        // volume bar below
-        val barW = dp(184)
+        // volume bar with slide-to-set
+        val barW = dp(190)
         val barH = dp(46)
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -227,14 +250,19 @@ class FloatingButtonService : Service() {
         val minus = circleButton(R.drawable.ic_minus)
         val plus = circleButton(R.drawable.ic_plus)
 
-        val track = LinearLayout(this).apply {
+        val fill = View(this).apply { background = roundBg(color, dp(3).toFloat()) }
+        val spacer = View(this)
+        val barInner = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             background = roundBg(light, dp(3).toFloat())
         }
-        val fill = View(this).apply { background = roundBg(accent, dp(3).toFloat()) }
-        val spacer = View(this)
-        track.addView(fill, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT))
-        track.addView(spacer, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT))
+        barInner.addView(fill, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT))
+        barInner.addView(spacer, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT))
+
+        val touchArea = FrameLayout(this)
+        touchArea.addView(barInner, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, dp(6), Gravity.CENTER_VERTICAL))
+
         val updateFill = {
             val vol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
             val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
@@ -242,19 +270,41 @@ class FloatingButtonService : Service() {
             (spacer.layoutParams as LinearLayout.LayoutParams).weight = (max - vol).toFloat()
             fill.requestLayout(); spacer.requestLayout()
         }
+        val setFromX = { x: Float, width: Int ->
+            if (width > 0) {
+                val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+                val frac = (x / width).coerceIn(0f, 1f)
+                val vol = (frac * max).roundToInt()
+                runCatching {
+                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, vol, 0)
+                }
+                updateFill()
+            }
+        }
+        touchArea.setOnTouchListener { v, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> { setFromX(e.x, v.width); true }
+                MotionEvent.ACTION_UP -> true
+                else -> false
+            }
+        }
         updateFill()
         minus.setOnClickListener {
-            audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, 0)
+            runCatching {
+                audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, 0)
+            }
             updateFill()
         }
         plus.setOnClickListener {
-            audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, 0)
+            runCatching {
+                audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, 0)
+            }
             updateFill()
         }
 
         bar.addView(minus, LinearLayout.LayoutParams(dp(32), dp(32)))
-        bar.addView(track, LinearLayout.LayoutParams(0, dp(6), 1f).apply {
-            leftMargin = dp(8); rightMargin = dp(8)
+        bar.addView(touchArea, LinearLayout.LayoutParams(0, dp(30), 1f).apply {
+            leftMargin = dp(6); rightMargin = dp(6)
         })
         bar.addView(plus, LinearLayout.LayoutParams(dp(32), dp(32)))
 
@@ -292,11 +342,12 @@ class FloatingButtonService : Service() {
     }
 
     // ---------- actions ----------
-    private fun onAction(id: String, satView: FrameLayout, iconView: ImageView) {
-        when (id) {
-            "torch" -> toggleTorch(satView, iconView)
+    private fun onSlot(def: String, satView: FrameLayout, iconView: ImageView, color: Int) {
+        if (def.startsWith("app:")) { launchApp(def.substring(4)); return }
+        when (def) {
+            "torch" -> toggleTorch(satView, iconView, color)
             "settings" -> {
-                startActivity(Intent(this, MainActivity::class.java)
+                startActivity(Intent(this, SettingsActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 collapse()
             }
@@ -323,13 +374,24 @@ class FloatingButtonService : Service() {
         }
     }
 
-    private fun toggleTorch(satView: FrameLayout, iconView: ImageView) {
+    private fun launchApp(pkg: String) {
+        val launch = packageManager.getLaunchIntentForPackage(pkg)
+        if (launch != null) {
+            launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(launch)
+        } else {
+            toast("Can't open that app")
+        }
+        collapse()
+    }
+
+    private fun toggleTorch(satView: FrameLayout, iconView: ImageView, color: Int) {
         val id = flashCameraId()
         if (id == null) { toast("No flashlight on this device"); return }
         try {
             torchOn = !torchOn
             cameraManager.setTorchMode(id, torchOn)
-            satView.background = circleBg(if (torchOn) accent else Color.WHITE)
+            satView.background = circleBg(if (torchOn) color else Color.WHITE)
             iconView.setColorFilter(if (torchOn) Color.WHITE else ink)
         } catch (e: Exception) {
             torchOn = false
@@ -356,6 +418,7 @@ class FloatingButtonService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        Prefs.unregisterListener(this, prefsListener)
         collapsedView?.let { runCatching { windowManager.removeView(it) } }
         expandedRoot?.let { runCatching { windowManager.removeView(it) } }
         collapsedView = null

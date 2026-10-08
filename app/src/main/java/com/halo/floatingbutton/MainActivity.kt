@@ -37,7 +37,7 @@ class MainActivity : AppCompatActivity() {
             setTextColor(Color.parseColor("#161A21"))
         }
         val subtitle = TextView(this).apply {
-            text = "Floating button · Phase 2"
+            text = "Floating button · Phase 3"
             textSize = 15f
             setTextColor(Color.parseColor("#5F6B7A"))
             setPadding(0, px(6), 0, px(28))
@@ -51,6 +51,12 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { onAction() }
         }
 
+        val customiseBtn = Button(this).apply {
+            text = "Customise Halo (colour, transparency, actions)"
+            setOnClickListener {
+                startActivity(Intent(this@MainActivity, SettingsActivity::class.java))
+            }
+        }
         val accessBtn = Button(this).apply {
             text = "Enable lock & screenshot (Accessibility)"
             setOnClickListener {
@@ -75,11 +81,18 @@ class MainActivity : AppCompatActivity() {
             )
         )
         root.addView(
-            accessBtn,
+            customiseBtn,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = px(14) }
+        )
+        root.addView(
+            accessBtn,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = px(10) }
         )
         root.addView(accessNote)
         setContentView(root)
