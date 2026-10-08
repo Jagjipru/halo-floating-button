@@ -15,9 +15,17 @@ android {
         versionName = "0.5.4"
     }
 
+    // ---- Sideload (debug) signing: stable key cached in CI ----
     val ksFile = rootProject.file(".signing/debug.jks")
     val ksPw = System.getenv("KS_PW")
     val useStable = ksFile.exists() && ksPw != null
+
+    // ---- Play Store (release) signing: upload key from CI secrets ----
+    val upStoreFile = System.getenv("UPLOAD_STORE_FILE")
+    val upStorePw = System.getenv("UPLOAD_STORE_PASSWORD")
+    val upKeyAlias = System.getenv("UPLOAD_KEY_ALIAS")
+    val upKeyPw = System.getenv("UPLOAD_KEY_PASSWORD")
+    val useUpload = upStoreFile != null && upStorePw != null && upKeyAlias != null && upKeyPw != null
 
     signingConfigs {
         create("stable") {
@@ -28,6 +36,14 @@ android {
                 keyPassword = ksPw
             }
         }
+        create("upload") {
+            if (useUpload) {
+                storeFile = file(upStoreFile!!)
+                storePassword = upStorePw
+                keyAlias = upKeyAlias
+                keyPassword = upKeyPw
+            }
+        }
     }
 
     buildTypes {
@@ -36,7 +52,13 @@ android {
         }
         release {
             isMinifyEnabled = false
-            if (useStable) signingConfig = signingConfigs.getByName("stable")
+            // Prefer the Play upload key when present (AAB build); otherwise
+            // fall back to the stable sideload key.
+            signingConfig = when {
+                useUpload -> signingConfigs.getByName("upload")
+                useStable -> signingConfigs.getByName("stable")
+                else -> null
+            }
         }
     }
 

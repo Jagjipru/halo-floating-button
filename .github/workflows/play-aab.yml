@@ -1,0 +1,57 @@
+name: Build Play AAB
+
+# Run this manually from the Actions tab when you want a Play-ready file.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  aab:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - name: Restore upload keystore from secret
+        env:
+          UPLOAD_KEYSTORE_B64: ${{ secrets.UPLOAD_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$UPLOAD_KEYSTORE_B64" ]; then
+            echo "::error::UPLOAD_KEYSTORE_B64 secret is missing. Add it under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          mkdir -p .signing
+          echo "$UPLOAD_KEYSTORE_B64" | base64 -d > .signing/halo-upload.jks
+          echo "Keystore restored ($(wc -c < .signing/halo-upload.jks) bytes)."
+
+      - name: Build signed release AAB
+        env:
+          UPLOAD_STORE_FILE: ${{ github.workspace }}/.signing/halo-upload.jks
+          UPLOAD_STORE_PASSWORD: ${{ secrets.UPLOAD_KEYSTORE_PW }}
+          UPLOAD_KEY_ALIAS: halo-upload
+          UPLOAD_KEY_PASSWORD: ${{ secrets.UPLOAD_KEYSTORE_PW }}
+        run: ./gradlew bundleRelease --no-daemon
+
+      - name: Name the AAB with its version
+        run: |
+          VER=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts | head -1)
+          cp app/build/outputs/bundle/release/app-release.aab "Halo-v$VER.aab"
+          echo "Built Halo-v$VER.aab"
+
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: halo-play-aab
+          path: Halo-v*.aab
+          if-no-files-found: error
