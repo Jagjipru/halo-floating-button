@@ -322,31 +322,46 @@ class FloatingButtonService : Service() {
         // middle, otherwise fan the actions inward based on which edge or corner
         // the button is docked against, so it looks right wherever it sits.
         val m = dp(96)
-        // Fan down when near the top, up when near the bottom (biased toward the
-        // screen interior), sideways on the mid-height edges, diamond in the middle.
-        val hBias = ((cx - screenW / 2.0) / (screenW / 2.0)).coerceIn(-1.0, 1.0) * 15.0
-        val topZone = cy < screenH * 0.30
-        val botZone = cy > screenH * 0.70
-        val base: Double? = when {                 // 0=right, 90=down, 180=left, 270=up
-            topZone -> 90.0 + hBias                // near top    -> fan down
-            botZone -> 270.0 - hBias               // near bottom -> fan up
-            cx > screenW - m -> 180.0              // right edge  -> fan left
-            cx < m -> 0.0                          // left edge   -> fan right
-            else -> null                           // middle      -> diamond
-        }
-        val volumeAbove = botZone
+        val centreX = screenW / 2.0
+        val centreY = screenH / 2.0
+        val topThresh = screenH * 0.22
+        val botThresh = screenH * 0.78
+        val xDock = cx < m || cx > screenW - m
+        val yDock = cy < topThresh || cy > botThresh
+        val corner = xDock && yDock          // true corner
+        val docked = xDock || yDock           // an edge (incl. corners)
+
+        val volumeAbove = cy > screenH * 0.70
         val rArc = dp(82).toDouble()
         val diamondR = dp(72) * 0.72
-        val offsets: List<Pair<Float, Float>> = if (base == null) {
-            listOf(-1f to -1f, 1f to -1f, -1f to 1f, 1f to 1f)
-                .map { (diamondR * it.first).toFloat() to (diamondR * it.second).toFloat() }
-        } else {
-            doubleArrayOf(-75.0, -25.0, 25.0, 75.0).map { off ->
+
+        // Corners: a tidy 2x2 grid fanning diagonally into the screen (avoids the
+        // edge-crowding an arc causes right in a corner, especially with labels).
+        // Mid-edges: an arc aimed at the screen centre. Middle: a diamond.
+        val offsets: List<Pair<Float, Float>>
+        val effR: Double
+        if (corner) {
+            val sx = if (cx < m) 1 else -1
+            val sy = if (cy < topThresh) 1 else -1
+            val gx0 = dp(48); val gy0 = dp(40); val gstep = dp(76)
+            val g = ArrayList<Pair<Float, Float>>(4)
+            for (iy in 0..1) for (ix in 0..1) {
+                g.add((sx * (gx0 + ix * gstep)).toFloat() to (sy * (gy0 + iy * gstep)).toFloat())
+            }
+            offsets = g
+            effR = (gy0 + gstep).toDouble()
+        } else if (docked) {
+            val base = Math.toDegrees(Math.atan2(centreY - cy, centreX - cx))
+            offsets = doubleArrayOf(-75.0, -25.0, 25.0, 75.0).map { off ->
                 val a = Math.toRadians(base + off)
                 (rArc * Math.cos(a)).toFloat() to (rArc * Math.sin(a)).toFloat()
             }
+            effR = rArc
+        } else {
+            offsets = listOf(-1f to -1f, 1f to -1f, -1f to 1f, 1f to 1f)
+                .map { (diamondR * it.first).toFloat() to (diamondR * it.second).toFloat() }
+            effR = diamondR
         }
-        val effR = if (base == null) diamondR else rArc
 
         val root = FrameLayout(this)
         val scrim = View(this).apply {
