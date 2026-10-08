@@ -136,7 +136,13 @@ class MainActivity : AppCompatActivity() {
             text = "Halo — a personal floating control button"
             textSize = 12f
             setTextColor(Color.parseColor("#8B96A5"))
-            setPadding(0, px(4), 0, px(14))
+            setPadding(0, px(4), 0, px(8))
+        }
+        val adFree = TextView(this).apply {
+            text = "Free forever · No ads · No tracking"
+            textSize = 12f
+            setTextColor(Color.parseColor("#F2552C"))
+            setPadding(0, 0, 0, px(14))
         }
         val emailLabel = TextView(this).apply {
             text = "Suggestions & bugs"
@@ -161,6 +167,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(aboutLabel)
         root.addView(creator)
         root.addView(tagline)
+        root.addView(adFree)
         root.addView(emailLabel)
         root.addView(email)
 
