@@ -11,8 +11,8 @@ android {
         applicationId = "com.halo.floatingbutton"
         minSdk = 26
         targetSdk = 34
-        versionCode = 12
-        versionName = "0.5.1"
+        versionCode = 13
+        versionName = "0.5.2"
     }
 
     val ksFile = rootProject.file(".signing/debug.jks")

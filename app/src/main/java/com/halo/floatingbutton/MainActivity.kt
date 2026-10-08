@@ -19,6 +19,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var status: TextView
     private lateinit var actionBtn: Button
+    private var updateBanner: TextView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -31,6 +32,16 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(px(24), px(40), px(24), px(24))
         }
+
+        val banner = TextView(this).apply {
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            setPadding(px(16), px(12), px(16), px(12))
+            setBackgroundColor(Color.parseColor("#F2552C"))
+            visibility = android.view.View.GONE
+            setOnClickListener { openUrl(UpdateCheck.APK) }
+        }
+        updateBanner = banner
 
         val title = TextView(this).apply {
             text = "Halo"
@@ -76,6 +87,13 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, px(10), 0, 0)
         }
 
+        root.addView(
+            banner,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = px(20) }
+        )
         root.addView(title)
         root.addView(subtitle)
         root.addView(status)
@@ -146,7 +164,11 @@ class MainActivity : AppCompatActivity() {
         root.addView(emailLabel)
         root.addView(email)
 
-        setContentView(root)
+        val scroll = android.widget.ScrollView(this).apply {
+            isFillViewport = true
+            addView(root)
+        }
+        setContentView(scroll)
     }
 
     private fun onAction() {
@@ -167,7 +189,9 @@ class MainActivity : AppCompatActivity() {
                 this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1
             )
         }
+        // ACTION_UNHIDE both starts the service and clears any temporary hide.
         val svc = Intent(this, FloatingButtonService::class.java)
+            .setAction(FloatingButtonService.ACTION_UNHIDE)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(svc)
         } else {
@@ -176,12 +200,63 @@ class MainActivity : AppCompatActivity() {
         moveTaskToBack(true)
     }
 
+    private fun openUrl(u: String) {
+        try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u))) } catch (e: Exception) {}
+    }
+
+    /** If Halo was hidden "until I open the app again", bring it back now. */
+    private fun restoreIfHiddenForApp() {
+        if (Prefs.hideMode(this) == "app" && Settings.canDrawOverlays(this)) {
+            Prefs.clearHide(this)
+            val svc = Intent(this, FloatingButtonService::class.java)
+                .setAction(FloatingButtonService.ACTION_UNHIDE)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(svc)
+            else startService(svc)
+        }
+    }
+
+    /** Silent background check; shows the banner if a newer release exists. */
+    private fun checkForUpdateQuietly() {
+        val current = try {
+            packageManager.getPackageInfo(packageName, 0).versionName ?: return
+        } catch (e: Exception) { return }
+        // throttle to at most once every 2 hours
+        if (System.currentTimeMillis() - Prefs.lastCheck(this) < 2 * 60 * 60 * 1000L) {
+            showBannerIfNewer(Prefs.latestSeen(this), current)
+            return
+        }
+        Thread {
+            val latest = UpdateCheck.fetchLatestVersion()
+            if (latest != null) {
+                Prefs.setLastCheck(this, System.currentTimeMillis())
+                Prefs.setLatestSeen(this, latest)
+                runOnUiThread { showBannerIfNewer(latest, current) }
+            }
+        }.start()
+    }
+
+    private fun showBannerIfNewer(latest: String, current: String) {
+        val b = updateBanner ?: return
+        if (latest.isNotBlank() && UpdateCheck.isNewer(latest, current)) {
+            b.text = "Update available — v$latest. Tap to download."
+            b.visibility = android.view.View.VISIBLE
+        } else {
+            b.visibility = android.view.View.GONE
+        }
+    }
+
     override fun onResume() {
         super.onResume()
+        restoreIfHiddenForApp()
+        checkForUpdateQuietly()
         if (Settings.canDrawOverlays(this)) {
-            status.text = "Overlay permission: granted ✓\nTap below to show the button."
+            val hidden = Prefs.hideMode(this) != "none"
+            status.text = if (hidden)
+                "Overlay permission: granted ✓\nHalo is hidden — tap below to show it now."
+            else
+                "Overlay permission: granted ✓\nTap below to show the button."
             status.setTextColor(Color.parseColor("#1F9D6B"))
-            actionBtn.text = "Show floating button"
+            actionBtn.text = if (hidden) "Show Halo now" else "Show floating button"
         } else {
             status.text =
                 "Overlay permission: needed.\nTap below, then allow “Display over other apps”, and return here."

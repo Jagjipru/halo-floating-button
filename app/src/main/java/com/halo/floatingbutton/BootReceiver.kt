@@ -10,6 +10,8 @@ import android.provider.Settings
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action != Intent.ACTION_BOOT_COMPLETED) return
+        // "Hide until I restart my phone" is satisfied by the reboot itself.
+        if (Prefs.hideMode(context) == "restart") Prefs.clearHide(context)
         if (!Prefs.boot(context)) return
         if (!Settings.canDrawOverlays(context)) return
         val svc = Intent(context, FloatingButtonService::class.java)

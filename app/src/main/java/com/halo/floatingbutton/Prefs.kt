@@ -17,6 +17,10 @@ object Prefs {
     const val KEY_LONGPRESS = "longpress"
     const val KEY_SNAP = "snap"
     const val KEY_ANIM = "anim"
+    const val KEY_HIDE_MODE = "hide_mode"   // none | timer | restart | app
+    const val KEY_HIDE_UNTIL = "hide_until" // epoch ms (timer mode)
+    const val KEY_LASTCHECK = "lastcheck"   // epoch ms of last update check
+    const val KEY_LATEST = "latest_seen"    // last version string seen online
     private const val KEY_SEEDED = "seeded_v1"
 
     const val SYSTEM_COLOR = 0           // sentinel: follow the device accent
@@ -75,6 +79,20 @@ object Prefs {
     // "pop", "spring", "scale", "none"
     fun anim(c: Context): String = sp(c).getString(KEY_ANIM, "pop") ?: "pop"
     fun setAnim(c: Context, v: String) = sp(c).edit().putString(KEY_ANIM, v).apply()
+
+    // ----- temporary hide -----
+    fun hideMode(c: Context): String = sp(c).getString(KEY_HIDE_MODE, "none") ?: "none"
+    fun setHideMode(c: Context, v: String) = sp(c).edit().putString(KEY_HIDE_MODE, v).apply()
+    fun hideUntil(c: Context) = sp(c).getLong(KEY_HIDE_UNTIL, 0L)
+    fun clearHide(c: Context) = sp(c).edit().putString(KEY_HIDE_MODE, "none").putLong(KEY_HIDE_UNTIL, 0L).apply()
+    fun setHide(c: Context, mode: String, until: Long) =
+        sp(c).edit().putString(KEY_HIDE_MODE, mode).putLong(KEY_HIDE_UNTIL, until).apply()
+
+    // ----- update check cache -----
+    fun lastCheck(c: Context) = sp(c).getLong(KEY_LASTCHECK, 0L)
+    fun setLastCheck(c: Context, v: Long) = sp(c).edit().putLong(KEY_LASTCHECK, v).apply()
+    fun latestSeen(c: Context): String = sp(c).getString(KEY_LATEST, "") ?: ""
+    fun setLatestSeen(c: Context, v: String) = sp(c).edit().putString(KEY_LATEST, v).apply()
 
     /** One-time: apply the grey / 40% default even to existing installs. */
     fun seedDefaults(c: Context) {

@@ -1,9 +1,11 @@
 package com.halo.floatingbutton
 
 import android.accessibilityservice.AccessibilityService
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -28,6 +30,7 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.NumberPicker
 import android.widget.TextView
 import android.widget.Toast
 import kotlin.math.abs
@@ -42,7 +45,9 @@ class FloatingButtonService : Service() {
 
     private var collapsedView: View? = null
     private var expandedRoot: View? = null
+    private var popupView: View? = null
     private var isOpen = false
+    private var hidden = false
 
     private var buttonX = 0
     private var buttonY = 0
@@ -54,6 +59,7 @@ class FloatingButtonService : Service() {
 
     private val ink = Color.parseColor("#161A21")
     private val light = Color.parseColor("#EDEFF3")
+    private val faintInk = Color.parseColor("#8B96A5")
 
     private fun buttonColor() = Prefs.resolvedColor(this)
     private fun buttonAlpha() = Prefs.alpha(this) / 100f
@@ -66,7 +72,11 @@ class FloatingButtonService : Service() {
         }
 
     override fun onBind(intent: Intent?): IBinder? = null
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_UNHIDE) unhide()
+        return START_STICKY
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -83,24 +93,57 @@ class FloatingButtonService : Service() {
         buttonY = if (savedY >= 0) savedY.coerceIn(dp(40), sh - sz - dp(54)) else sh / 2
         startAsForeground()
         Prefs.registerListener(this, prefsListener)
-        showCollapsed()
+        applyStartState()
     }
 
+    /** Decide whether to show the button on start, honouring a temporary hide. */
+    private fun applyStartState() {
+        when (Prefs.hideMode(this)) {
+            "timer" -> {
+                val until = Prefs.hideUntil(this)
+                if (System.currentTimeMillis() >= until) {
+                    Prefs.clearHide(this); showCollapsed()
+                } else {
+                    hidden = true; scheduleUnhideAlarm(until); updateNotification(true)
+                }
+            }
+            "restart", "app" -> { hidden = true; updateNotification(true) }
+            else -> showCollapsed()
+        }
+    }
+
+    private val channelId = "halo_overlay"
+
     private fun startAsForeground() {
-        val channelId = "halo_overlay"
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
             NotificationChannel(channelId, "Halo", NotificationManager.IMPORTANCE_MIN)
         )
-        val notification: Notification = Notification.Builder(this, channelId)
-            .setContentTitle("Halo")
-            .setContentText("Floating button is active")
-            .setSmallIcon(R.drawable.ic_launcher)
-            .build()
+        val notification = buildNotification(false)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
             startForeground(1, notification)
+        }
+    }
+
+    private fun buildNotification(isHidden: Boolean): Notification {
+        val tap = PendingIntent.getService(
+            this, 8,
+            Intent(this, FloatingButtonService::class.java).setAction(ACTION_UNHIDE),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val b = Notification.Builder(this, channelId)
+            .setContentTitle("Halo")
+            .setContentText(if (isHidden) "Hidden — tap to show" else "Floating button is active")
+            .setSmallIcon(R.drawable.ic_launcher)
+        if (isHidden) b.setContentIntent(tap)
+        return b.build()
+    }
+
+    private fun updateNotification(isHidden: Boolean) {
+        runCatching {
+            getSystemService(NotificationManager::class.java).notify(1, buildNotification(isHidden))
         }
     }
 
@@ -124,6 +167,7 @@ class FloatingButtonService : Service() {
 
     // ---------- collapsed ----------
     private fun showCollapsed() {
+        if (collapsedView != null || isOpen || hidden) return
         val size = dp(Prefs.size(this))
         val button = ImageView(this).apply {
             background = circleBg(buttonColor())
@@ -471,6 +515,32 @@ class FloatingButtonService : Service() {
             leftMargin = vLeft; topMargin = vTop
         })
 
+        // Hide-Halo pill, anchored bottom-centre
+        val hidePill = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = roundBg(Color.WHITE, dp(20).toFloat())
+            setPadding(dp(14), dp(9), dp(16), dp(9))
+        }
+        hidePill.addView(ImageView(this).apply {
+            setImageResource(R.drawable.ic_hide); setColorFilter(ink)
+        }, LinearLayout.LayoutParams(dp(18), dp(18)).apply { rightMargin = dp(8) })
+        hidePill.addView(TextView(this).apply {
+            text = "Hide Halo"; textSize = 13f; setTextColor(ink)
+        })
+        hidePill.setOnClickListener {
+            // leave the menu and open the hide-duration chooser
+            isOpen = false
+            expandedRoot?.let { runCatching { windowManager.removeView(it) } }
+            expandedRoot = null
+            showHideChooser()
+        }
+        root.addView(hidePill, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        ).apply { bottomMargin = dp(30) })
+        animViews.add(hidePill)
+
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -658,13 +728,183 @@ class FloatingButtonService : Service() {
 
     private fun clamp(v: Int, lo: Int, hi: Int) = if (hi < lo) lo else v.coerceIn(lo, hi)
 
+    // ---------- temporary hide ----------
+    private val now get() = System.currentTimeMillis()
+
+    private fun popupWindowParams() = WindowManager.LayoutParams(
+        WindowManager.LayoutParams.MATCH_PARENT,
+        WindowManager.LayoutParams.MATCH_PARENT,
+        overlayType(),
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+        PixelFormat.TRANSLUCENT
+    ).apply { gravity = Gravity.TOP or Gravity.START; x = 0; y = 0 }
+
+    private fun removePopup() {
+        popupView?.let { runCatching { windowManager.removeView(it) } }
+        popupView = null
+    }
+
+    /** A centred white card over a scrim, matching the menu's look. */
+    private fun cardPopup(title: String, onCancel: () -> Unit, build: (LinearLayout) -> Unit) {
+        removePopup()
+        val root = FrameLayout(this)
+        val scrim = View(this).apply {
+            setBackgroundColor(Color.parseColor("#5C000000"))
+            setOnClickListener { removePopup(); onCancel() }
+        }
+        root.addView(scrim, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundBg(Color.WHITE, dp(20).toFloat())
+            setPadding(dp(18), dp(18), dp(18), dp(12))
+        }
+        card.addView(TextView(this).apply {
+            text = title; textSize = 16f; setTextColor(ink)
+            setPadding(dp(4), 0, 0, dp(12))
+        })
+        build(card)
+        root.addView(card, FrameLayout.LayoutParams(dp(268),
+            FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+
+        windowManager.addView(root, popupWindowParams())
+        popupView = root
+        card.alpha = 0f; card.scaleX = 0.9f; card.scaleY = 0.9f
+        card.animate().alpha(1f).scaleX(1f).scaleY(1f)
+            .setInterpolator(android.view.animation.DecelerateInterpolator())
+            .setDuration(170).start()
+    }
+
+    private fun pill(label: String, onClick: () -> Unit): View {
+        val t = TextView(this).apply {
+            text = label; textSize = 15f; setTextColor(ink)
+            background = roundBg(light, dp(12).toFloat())
+            setPadding(dp(16), dp(13), dp(16), dp(13))
+            setOnClickListener { onClick() }
+        }
+        return t
+    }
+
+    private fun LinearLayout.addPill(label: String, onClick: () -> Unit) {
+        addView(pill(label, onClick), LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(8) })
+    }
+
+    private fun showHideChooser() = cardPopup("Hide Halo", onCancel = { showCollapsed() }) { card ->
+        card.addPill("5 minutes") { removePopup(); hideFor("timer", now + 5 * 60_000L) }
+        card.addPill("10 minutes") { removePopup(); hideFor("timer", now + 10 * 60_000L) }
+        card.addPill("30 minutes") { removePopup(); hideFor("timer", now + 30 * 60_000L) }
+        card.addPill("Custom…") { removePopup(); showHideCustom() }
+    }
+
+    private fun showHideCustom() = cardPopup("Hide until…", onCancel = { showCollapsed() }) { card ->
+        card.addPill("I restart my phone") { removePopup(); hideFor("restart", 0L) }
+        card.addPill("I open Halo again") { removePopup(); hideFor("app", 0L) }
+        card.addPill("A custom time…") { removePopup(); showCustomTime() }
+    }
+
+    private fun showCustomTime() = cardPopup("Hide for…", onCancel = { showCollapsed() }) { card ->
+        val hours = NumberPicker(this).apply {
+            minValue = 0; maxValue = 12; value = 1
+            descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
+        }
+        val mins = NumberPicker(this).apply {
+            minValue = 0; maxValue = 59; value = 0
+            descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
+        }
+        val pickers = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
+        }
+        fun unit(label: String) = TextView(this).apply {
+            text = label; textSize = 13f; setTextColor(faintInk)
+            setPadding(dp(4), 0, dp(14), 0)
+        }
+        pickers.addView(hours); pickers.addView(unit("h"))
+        pickers.addView(mins); pickers.addView(unit("m"))
+        card.addView(pickers, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+
+        val confirm = TextView(this).apply {
+            text = "Hide"; textSize = 15f; setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            background = roundBg(buttonColor(), dp(12).toFloat())
+            setPadding(dp(16), dp(13), dp(16), dp(13))
+            setOnClickListener {
+                val ms = (hours.value * 60 + mins.value) * 60_000L
+                removePopup()
+                if (ms > 0) hideFor("timer", now + ms) else showCollapsed()
+            }
+        }
+        card.addView(confirm, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(14) })
+    }
+
+    private fun hideFor(mode: String, untilMs: Long) {
+        isOpen = false
+        expandedRoot?.let { runCatching { windowManager.removeView(it) } }
+        expandedRoot = null
+        collapsedView?.let { runCatching { windowManager.removeView(it) } }
+        collapsedView = null
+        cancelIdle()
+        hidden = true
+        Prefs.setHide(this, mode, if (mode == "timer") untilMs else 0L)
+        if (mode == "timer") scheduleUnhideAlarm(untilMs)
+        updateNotification(true)
+        toast(when (mode) {
+            "restart" -> "Halo hidden until you restart your phone"
+            "app" -> "Halo hidden until you reopen Halo"
+            else -> "Halo hidden for ${fmtDuration(untilMs - now)}"
+        })
+    }
+
+    private fun unhide() {
+        cancelUnhideAlarm()
+        Prefs.clearHide(this)
+        hidden = false
+        updateNotification(false)
+        showCollapsed()
+    }
+
+    private fun fmtDuration(ms: Long): String {
+        val mins = (ms / 60_000L).toInt().coerceAtLeast(1)
+        return if (mins < 60) "$mins min"
+        else {
+            val h = mins / 60; val m = mins % 60
+            if (m == 0) "${h}h" else "${h}h ${m}m"
+        }
+    }
+
+    private fun unhidePendingIntent(): PendingIntent = PendingIntent.getService(
+        this, 7,
+        Intent(this, FloatingButtonService::class.java).setAction(ACTION_UNHIDE),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+
+    private fun scheduleUnhideAlarm(until: Long) {
+        val am = getSystemService(AlarmManager::class.java)
+        runCatching { am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, until, unhidePendingIntent()) }
+    }
+
+    private fun cancelUnhideAlarm() {
+        runCatching { getSystemService(AlarmManager::class.java).cancel(unhidePendingIntent()) }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         cancelIdle()
         Prefs.unregisterListener(this, prefsListener)
         collapsedView?.let { runCatching { windowManager.removeView(it) } }
         expandedRoot?.let { runCatching { windowManager.removeView(it) } }
+        popupView?.let { runCatching { windowManager.removeView(it) } }
         collapsedView = null
         expandedRoot = null
+        popupView = null
+    }
+
+    companion object {
+        const val ACTION_UNHIDE = "com.halo.floatingbutton.UNHIDE"
     }
 }
