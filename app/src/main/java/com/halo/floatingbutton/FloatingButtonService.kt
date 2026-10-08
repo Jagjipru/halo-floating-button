@@ -144,7 +144,10 @@ class FloatingButtonService : Service() {
                     val dx = (event.rawX - touchX).toInt()
                     val dy = (event.rawY - touchY).toInt()
                     if (abs(dx) > 10 || abs(dy) > 10) moved = true
-                    params.x = startX + dx; params.y = startY + dy
+                    val maxX = resources.displayMetrics.widthPixels - size
+                    val maxY = resources.displayMetrics.heightPixels - size - dp(54)
+                    params.x = (startX + dx).coerceIn(0, maxX)
+                    params.y = (startY + dy).coerceIn(dp(40), maxY)
                     windowManager.updateViewLayout(button, params)
                     true
                 }
@@ -186,22 +189,19 @@ class FloatingButtonService : Service() {
         // middle, otherwise fan the actions inward based on which edge or corner
         // the button is docked against, so it looks right wherever it sits.
         val m = dp(96)
-        val nearLeft = cx < m
-        val nearRight = cx > screenW - m
-        val nearTop = cy < m
-        val nearBottom = cy > screenH - m
+        // Fan down when near the top, up when near the bottom (biased toward the
+        // screen interior), sideways on the mid-height edges, diamond in the middle.
+        val hBias = ((cx - screenW / 2.0) / (screenW / 2.0)).coerceIn(-1.0, 1.0) * 15.0
+        val topZone = cy < screenH * 0.30
+        val botZone = cy > screenH * 0.70
         val base: Double? = when {                 // 0=right, 90=down, 180=left, 270=up
-            nearTop && nearRight -> 135.0          // top-right  -> fan down-left
-            nearTop && nearLeft -> 45.0            // top-left   -> fan down-right
-            nearBottom && nearRight -> 225.0       // bottom-right -> fan up-left
-            nearBottom && nearLeft -> 315.0        // bottom-left  -> fan up-right
-            nearRight -> 180.0                     // right edge -> fan left
-            nearLeft -> 0.0                        // left edge  -> fan right
-            nearTop -> 90.0                        // top edge   -> fan down
-            nearBottom -> 270.0                    // bottom edge-> fan up
-            else -> null                           // free       -> diamond
+            topZone -> 90.0 + hBias                // near top    -> fan down
+            botZone -> 270.0 - hBias               // near bottom -> fan up
+            cx > screenW - m -> 180.0              // right edge  -> fan left
+            cx < m -> 0.0                          // left edge   -> fan right
+            else -> null                           // middle      -> diamond
         }
-        val volumeAbove = nearBottom
+        val volumeAbove = botZone
         val rArc = dp(82).toDouble()
         val diamondR = dp(72) * 0.72
         val offsets: List<Pair<Float, Float>> = if (base == null) {
@@ -280,13 +280,13 @@ class FloatingButtonService : Service() {
                 column.addView(satLabel(labelText))
                 column.setOnClickListener { onSlot(def, circle, icon, color) }
                 val leftM = clamp((satCx - colW / 2).toInt(), dp(6), screenW - colW - dp(6))
-                val topM = clamp((satCy - sat / 2).toInt(), dp(30), screenH - sat - dp(28))
+                val topM = clamp((satCy - sat / 2).toInt(), dp(40), screenH - sat - dp(28))
                 root.addView(column, FrameLayout.LayoutParams(colW, FrameLayout.LayoutParams.WRAP_CONTENT)
                     .apply { leftMargin = leftM; topMargin = topM })
             } else {
                 circle.setOnClickListener { onSlot(def, circle, icon, color) }
                 val leftM = clamp((satCx - sat / 2).toInt(), dp(8), screenW - sat - dp(8))
-                val topM = clamp((satCy - sat / 2).toInt(), dp(30), screenH - sat - dp(8))
+                val topM = clamp((satCy - sat / 2).toInt(), dp(40), screenH - sat - dp(8))
                 root.addView(circle, FrameLayout.LayoutParams(sat, sat)
                     .apply { leftMargin = leftM; topMargin = topM })
             }
@@ -371,7 +371,7 @@ class FloatingButtonService : Service() {
         bar.addView(percent, LinearLayout.LayoutParams(dp(42), LinearLayout.LayoutParams.WRAP_CONTENT)
             .apply { leftMargin = dp(6) })
 
-        val volGap = effR + (if (showLabels) dp(32) else dp(12))
+        val volGap = effR + dp(30) + (if (showLabels) dp(24) else 0)
         val vLeft = clamp((cx - barW / 2), dp(8), screenW - barW - dp(8))
         val vTop = clamp(
             (if (volumeAbove) cy - volGap - barH else cy + volGap).toInt(),
