@@ -1,6 +1,8 @@
 name: Build Play AAB
 
 # Run this manually from the Actions tab when you want a Play-ready file.
+# Signs the AAB with the same stable key used for the sideload APK, so it is
+# a valid, consistent upload key for Google Play App Signing.
 on:
   workflow_dispatch:
 
@@ -23,24 +25,26 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Restore upload keystore from secret
+      - name: Cache signing key
+        uses: actions/cache@v4
+        with:
+          path: .signing
+          key: halo-signing-v2
+
+      - name: Ensure signing key exists
         env:
-          UPLOAD_KEYSTORE_B64: ${{ secrets.UPLOAD_KEYSTORE_B64 }}
+          KS_PW: ${{ github.repository_id }}
         run: |
-          if [ -z "$UPLOAD_KEYSTORE_B64" ]; then
-            echo "::error::UPLOAD_KEYSTORE_B64 secret is missing. Add it under Settings > Secrets and variables > Actions."
-            exit 1
+          if [ ! -f .signing/debug.jks ]; then
+            mkdir -p .signing
+            keytool -genkeypair -v -keystore .signing/debug.jks -storetype PKCS12 \
+              -keyalg RSA -keysize 2048 -validity 10000 -alias halo \
+              -storepass "$KS_PW" -keypass "$KS_PW" -dname "CN=Halo Personal"
           fi
-          mkdir -p .signing
-          echo "$UPLOAD_KEYSTORE_B64" | base64 -d > .signing/halo-upload.jks
-          echo "Keystore restored ($(wc -c < .signing/halo-upload.jks) bytes)."
 
       - name: Build signed release AAB
         env:
-          UPLOAD_STORE_FILE: ${{ github.workspace }}/.signing/halo-upload.jks
-          UPLOAD_STORE_PASSWORD: ${{ secrets.UPLOAD_KEYSTORE_PW }}
-          UPLOAD_KEY_ALIAS: halo-upload
-          UPLOAD_KEY_PASSWORD: ${{ secrets.UPLOAD_KEYSTORE_PW }}
+          KS_PW: ${{ github.repository_id }}
         run: ./gradlew bundleRelease --no-daemon
 
       - name: Name the AAB with its version
