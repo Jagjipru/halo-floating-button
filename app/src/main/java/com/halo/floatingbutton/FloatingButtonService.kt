@@ -53,6 +53,7 @@ class FloatingButtonService : Service() {
     private var buttonY = 0
     private var torchOn = false
     private var idleRunnable: Runnable? = null
+    private var unhideRunnable: Runnable? = null
 
     private val density get() = resources.displayMetrics.density
     private fun dp(v: Int) = (v * density).toInt()
@@ -104,7 +105,7 @@ class FloatingButtonService : Service() {
                 if (System.currentTimeMillis() >= until) {
                     Prefs.clearHide(this); showCollapsed()
                 } else {
-                    hidden = true; scheduleUnhideAlarm(until); updateNotification(true)
+                    hidden = true; scheduleUnhideTimers(until); updateNotification(true)
                 }
             }
             "restart", "app" -> { hidden = true; updateNotification(true) }
@@ -807,11 +808,11 @@ class FloatingButtonService : Service() {
 
     private fun showCustomTime() = cardPopup("Hide for…", onCancel = { showCollapsed() }) { card ->
         val hours = NumberPicker(this).apply {
-            minValue = 0; maxValue = 12; value = 1
+            minValue = 0; maxValue = 12; value = 0
             descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
         }
         val mins = NumberPicker(this).apply {
-            minValue = 0; maxValue = 59; value = 0
+            minValue = 0; maxValue = 59; value = 5
             descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
         }
         val pickers = LinearLayout(this).apply {
@@ -827,15 +828,22 @@ class FloatingButtonService : Service() {
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
 
         val confirm = TextView(this).apply {
-            text = "Hide"; textSize = 15f; setTextColor(Color.WHITE)
+            textSize = 15f; setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             background = roundBg(buttonColor(), dp(12).toFloat())
             setPadding(dp(16), dp(13), dp(16), dp(13))
-            setOnClickListener {
-                val ms = (hours.value * 60 + mins.value) * 60_000L
-                removePopup()
-                if (ms > 0) hideFor("timer", now + ms) else showCollapsed()
-            }
+        }
+        fun totalMs() = (hours.value * 60 + mins.value) * 60_000L
+        fun refresh() {
+            val ms = totalMs()
+            confirm.text = if (ms > 0) "Hide for ${fmtDuration(ms)}" else "Pick a time"
+        }
+        refresh()
+        hours.setOnValueChangedListener { _, _, _ -> refresh() }
+        mins.setOnValueChangedListener { _, _, _ -> refresh() }
+        confirm.setOnClickListener {
+            val ms = totalMs()
+            if (ms > 0) { removePopup(); hideFor("timer", now + ms) }
         }
         card.addView(confirm, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
@@ -851,7 +859,7 @@ class FloatingButtonService : Service() {
         cancelIdle()
         hidden = true
         Prefs.setHide(this, mode, if (mode == "timer") untilMs else 0L)
-        if (mode == "timer") scheduleUnhideAlarm(untilMs)
+        if (mode == "timer") scheduleUnhideTimers(untilMs)
         updateNotification(true)
         toast(when (mode) {
             "restart" -> "Halo hidden until you restart your phone"
@@ -862,10 +870,22 @@ class FloatingButtonService : Service() {
 
     private fun unhide() {
         cancelUnhideAlarm()
+        unhideRunnable?.let { handler.removeCallbacks(it) }
+        unhideRunnable = null
         Prefs.clearHide(this)
         hidden = false
         updateNotification(false)
         showCollapsed()
+    }
+
+    /** Two timers for reliability: an in-app Handler (exact while the phone is
+     *  awake / the app is alive) plus an alarm-clock (exact even in Doze). */
+    private fun scheduleUnhideTimers(untilMs: Long) {
+        unhideRunnable?.let { handler.removeCallbacks(it) }
+        val r = Runnable { unhide() }
+        unhideRunnable = r
+        handler.postDelayed(r, (untilMs - now).coerceAtLeast(0L))
+        scheduleUnhideAlarm(untilMs)
     }
 
     private fun fmtDuration(ms: Long): String {
@@ -904,6 +924,7 @@ class FloatingButtonService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         cancelIdle()
+        unhideRunnable?.let { handler.removeCallbacks(it) }
         Prefs.unregisterListener(this, prefsListener)
         collapsedView?.let { runCatching { windowManager.removeView(it) } }
         expandedRoot?.let { runCatching { windowManager.removeView(it) } }
