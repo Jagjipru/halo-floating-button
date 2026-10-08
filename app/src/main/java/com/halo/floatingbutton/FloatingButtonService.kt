@@ -177,9 +177,32 @@ class FloatingButtonService : Service() {
         val screenH = resources.displayMetrics.heightPixels
         val s = dp(56)
         val sat = dp(44)
-        val r = dp(72) * 0.72f
         val cx = buttonX + s / 2
         val cy = buttonY + s / 2
+
+        // Layout: a four-corner diamond when the button is free in the middle,
+        // or an inward-facing semicircle when it's docked against an edge.
+        val edgeMargin = dp(96)
+        val base: Double? = when {
+            cx > screenW - edgeMargin -> 180.0   // right wall -> fan left
+            cx < edgeMargin -> 0.0               // left wall -> fan right
+            cy < edgeMargin + dp(28) -> 90.0     // top -> fan down
+            cy > screenH - edgeMargin -> 270.0   // bottom -> fan up
+            else -> null                         // free -> diamond
+        }
+        val volumeAbove = base == 270.0
+        val rArc = dp(82).toDouble()
+        val diamondR = dp(72) * 0.72
+        val offsets: List<Pair<Float, Float>> = if (base == null) {
+            listOf(-1f to -1f, 1f to -1f, -1f to 1f, 1f to 1f)
+                .map { (diamondR * it.first).toFloat() to (diamondR * it.second).toFloat() }
+        } else {
+            doubleArrayOf(-75.0, -25.0, 25.0, 75.0).map { off ->
+                val a = Math.toRadians(base + off)
+                (rArc * Math.cos(a)).toFloat() to (rArc * Math.sin(a)).toFloat()
+            }
+        }
+        val belowDist = if (base == null) diamondR else rArc
 
         val root = FrameLayout(this)
         val scrim = View(this).apply {
@@ -201,7 +224,6 @@ class FloatingButtonService : Service() {
         })
 
         // satellites
-        val diag = listOf(-1 to -1, 1 to -1, -1 to 1, 1 to 1)
         for (i in 0..3) {
             val def = Prefs.slot(this, i)
             val container = FrameLayout(this)
@@ -229,8 +251,8 @@ class FloatingButtonService : Service() {
             container.addView(icon, FrameLayout.LayoutParams(iconSize, iconSize, Gravity.CENTER))
             container.setOnClickListener { onSlot(def, container, icon, color) }
 
-            val satCx = cx + (diag[i].first * r)
-            val satCy = cy + (diag[i].second * r)
+            val satCx = cx + offsets[i].first
+            val satCy = cy + offsets[i].second
             val leftM = clamp((satCx - sat / 2).toInt(), dp(8), screenW - sat - dp(8))
             val topM = clamp((satCy - sat / 2).toInt(), dp(30), screenH - sat - dp(8))
             root.addView(container, FrameLayout.LayoutParams(sat, sat).apply {
@@ -309,7 +331,10 @@ class FloatingButtonService : Service() {
         bar.addView(plus, LinearLayout.LayoutParams(dp(32), dp(32)))
 
         val vLeft = clamp((cx - barW / 2), dp(8), screenW - barW - dp(8))
-        val vTop = clamp((cy + r + dp(26)).toInt(), dp(30), screenH - barH - dp(8))
+        val vTop = clamp(
+            (if (volumeAbove) cy - rArc - dp(46) else cy + belowDist + dp(22)).toInt(),
+            dp(30), screenH - barH - dp(8)
+        )
         root.addView(bar, FrameLayout.LayoutParams(barW, barH).apply {
             leftMargin = vLeft; topMargin = vTop
         })
