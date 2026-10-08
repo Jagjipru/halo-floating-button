@@ -21,6 +21,9 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.provider.Settings
 import android.text.TextUtils
 import android.view.Gravity
@@ -57,6 +60,30 @@ class FloatingButtonService : Service() {
 
     private val density get() = resources.displayMetrics.density
     private fun dp(v: Int) = (v * density).toInt()
+
+    private val vibrator: Vibrator? by lazy {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION") getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        }
+    }
+
+    /** Subtle haptic tick/click, if the user has haptics on and the device supports it. */
+    private fun haptic(strong: Boolean = false) {
+        if (!Prefs.haptics(this)) return
+        val v = vibrator ?: return
+        if (!v.hasVibrator()) return
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val effect = if (strong) VibrationEffect.EFFECT_CLICK else VibrationEffect.EFFECT_TICK
+                v.vibrate(VibrationEffect.createPredefined(effect))
+            } else {
+                @Suppress("DEPRECATION")
+                v.vibrate(VibrationEffect.createOneShot(if (strong) 18L else 10L, VibrationEffect.DEFAULT_AMPLITUDE))
+            }
+        }
+    }
 
     private val ink = Color.parseColor("#161A21")
     private val light = Color.parseColor("#EDEFF3")
@@ -306,6 +333,7 @@ class FloatingButtonService : Service() {
     private fun expand() {
         if (isOpen) return
         isOpen = true
+        haptic(strong = true)
         collapsedView?.let { runCatching { windowManager.removeView(it) } }
         collapsedView = null
 
@@ -475,12 +503,14 @@ class FloatingButtonService : Service() {
             FrameLayout.LayoutParams.MATCH_PARENT, dp(6), Gravity.CENTER_VERTICAL))
 
         val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+        var lastVol = -1
         val updateVol = {
             val vol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
             (fill.layoutParams as LinearLayout.LayoutParams).weight = vol.toFloat()
             (spacer.layoutParams as LinearLayout.LayoutParams).weight = (maxVol - vol).toFloat()
             fill.requestLayout(); spacer.requestLayout()
             percent.text = "${vol * 100 / maxVol}%"
+            if (vol != lastVol) { if (lastVol != -1) haptic(); lastVol = vol }
         }
         touchArea.setOnTouchListener { v, e ->
             when (e.action) {
@@ -655,6 +685,7 @@ class FloatingButtonService : Service() {
 
     // ---------- actions ----------
     private fun onSlot(def: String, satView: FrameLayout, iconView: ImageView, color: Int) {
+        haptic(strong = true)
         when {
             def.startsWith("app:") -> { launchAppNoCollapse(def.substring(4)); collapse() }
             def == "torch" -> {

@@ -85,6 +85,7 @@ class SettingsActivity : AppCompatActivity() {
         root.addView(sectionLabel("Behaviour"))
         root.addView(buildBootToggle())
         root.addView(buildSnapToggle())
+        root.addView(buildHapticsToggle())
 
         root.addView(sectionLabel("Open animation"))
         root.addView(buildAnimRow())
@@ -328,6 +329,22 @@ class SettingsActivity : AppCompatActivity() {
         row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         row.addView(sw)
         return row
+    }
+
+    // ---------- haptics ----------
+    private fun buildHapticsToggle(): View {
+        val row = cardRow()
+        val label = TextView(this).apply {
+            text = "Haptic feedback (vibration)"
+            textSize = 15f; setTextColor(ink)
+        }
+        val sw = android.widget.Switch(this).apply {
+            isChecked = Prefs.haptics(this@SettingsActivity)
+            setOnCheckedChangeListener { _, c -> Prefs.setHaptics(this@SettingsActivity, c) }
+        }
+        row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(sw)
+        return wrap(row)
     }
 
     // ---------- edge-snap ----------

@@ -17,6 +17,7 @@ object Prefs {
     const val KEY_LONGPRESS = "longpress"
     const val KEY_SNAP = "snap"
     const val KEY_ANIM = "anim"
+    const val KEY_HAPTICS = "haptics"
     const val KEY_HIDE_MODE = "hide_mode"   // none | timer | restart | app
     const val KEY_HIDE_UNTIL = "hide_until" // epoch ms (timer mode)
     const val KEY_LASTCHECK = "lastcheck"   // epoch ms of last update check
@@ -75,6 +76,9 @@ object Prefs {
 
     fun snap(c: Context) = sp(c).getBoolean(KEY_SNAP, true)
     fun setSnap(c: Context, v: Boolean) = sp(c).edit().putBoolean(KEY_SNAP, v).apply()
+
+    fun haptics(c: Context) = sp(c).getBoolean(KEY_HAPTICS, true)
+    fun setHaptics(c: Context, v: Boolean) = sp(c).edit().putBoolean(KEY_HAPTICS, v).apply()
 
     // "pop", "spring", "scale", "none"
     fun anim(c: Context): String = sp(c).getString(KEY_ANIM, "pop") ?: "pop"
