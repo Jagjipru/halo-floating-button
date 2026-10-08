@@ -11,13 +11,32 @@ android {
         applicationId = "com.halo.floatingbutton"
         minSdk = 26
         targetSdk = 34
-        versionCode = 8
-        versionName = "0.4.2"
+        versionCode = 9
+        versionName = "0.4.3"
+    }
+
+    val ksFile = rootProject.file(".signing/debug.jks")
+    val ksPw = System.getenv("KS_PW")
+    val useStable = ksFile.exists() && ksPw != null
+
+    signingConfigs {
+        create("stable") {
+            if (useStable) {
+                storeFile = ksFile
+                storePassword = ksPw
+                keyAlias = "halo"
+                keyPassword = ksPw
+            }
+        }
     }
 
     buildTypes {
+        debug {
+            if (useStable) signingConfig = signingConfigs.getByName("stable")
+        }
         release {
             isMinifyEnabled = false
+            if (useStable) signingConfig = signingConfigs.getByName("stable")
         }
     }
 
