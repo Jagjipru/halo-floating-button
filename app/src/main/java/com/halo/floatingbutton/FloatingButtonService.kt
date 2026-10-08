@@ -182,17 +182,26 @@ class FloatingButtonService : Service() {
         val cx = buttonX + s / 2
         val cy = buttonY + s / 2
 
-        // Layout: a four-corner diamond when the button is free in the middle,
-        // or an inward-facing semicircle when it's docked against an edge.
-        val edgeMargin = dp(96)
-        val base: Double? = when {
-            cx > screenW - edgeMargin -> 180.0   // right wall -> fan left
-            cx < edgeMargin -> 0.0               // left wall -> fan right
-            cy < edgeMargin + dp(28) -> 90.0     // top -> fan down
-            cy > screenH - edgeMargin -> 270.0   // bottom -> fan up
-            else -> null                         // free -> diamond
+        // Dynamic layout: a four-corner diamond when the button is free in the
+        // middle, otherwise fan the actions inward based on which edge or corner
+        // the button is docked against, so it looks right wherever it sits.
+        val m = dp(96)
+        val nearLeft = cx < m
+        val nearRight = cx > screenW - m
+        val nearTop = cy < m
+        val nearBottom = cy > screenH - m
+        val base: Double? = when {                 // 0=right, 90=down, 180=left, 270=up
+            nearTop && nearRight -> 135.0          // top-right  -> fan down-left
+            nearTop && nearLeft -> 45.0            // top-left   -> fan down-right
+            nearBottom && nearRight -> 225.0       // bottom-right -> fan up-left
+            nearBottom && nearLeft -> 315.0        // bottom-left  -> fan up-right
+            nearRight -> 180.0                     // right edge -> fan left
+            nearLeft -> 0.0                        // left edge  -> fan right
+            nearTop -> 90.0                        // top edge   -> fan down
+            nearBottom -> 270.0                    // bottom edge-> fan up
+            else -> null                           // free       -> diamond
         }
-        val volumeAbove = base == 270.0
+        val volumeAbove = nearBottom
         val rArc = dp(82).toDouble()
         val diamondR = dp(72) * 0.72
         val offsets: List<Pair<Float, Float>> = if (base == null) {
@@ -204,7 +213,7 @@ class FloatingButtonService : Service() {
                 (rArc * Math.cos(a)).toFloat() to (rArc * Math.sin(a)).toFloat()
             }
         }
-        val belowDist = if (base == null) diamondR else rArc
+        val effR = if (base == null) diamondR else rArc
 
         val root = FrameLayout(this)
         val scrim = View(this).apply {
@@ -362,10 +371,11 @@ class FloatingButtonService : Service() {
         bar.addView(percent, LinearLayout.LayoutParams(dp(42), LinearLayout.LayoutParams.WRAP_CONTENT)
             .apply { leftMargin = dp(6) })
 
+        val volGap = effR + (if (showLabels) dp(32) else dp(12))
         val vLeft = clamp((cx - barW / 2), dp(8), screenW - barW - dp(8))
         val vTop = clamp(
-            (if (volumeAbove) cy - rArc - dp(46) else cy + belowDist + dp(22)).toInt(),
-            dp(30), screenH - barH - dp(8)
+            (if (volumeAbove) cy - volGap - barH else cy + volGap).toInt(),
+            dp(34), screenH - barH - dp(8)
         )
         root.addView(bar, FrameLayout.LayoutParams(barW, barH).apply {
             leftMargin = vLeft; topMargin = vTop
