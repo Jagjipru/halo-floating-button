@@ -54,7 +54,8 @@ class MainActivity : AppCompatActivity() {
             ""
         }
         val subtitle = TextView(this).apply {
-            text = if (versionName.isNullOrBlank()) "Floating button" else "Floating button · v$versionName"
+            val base = "Android Floating Control Button"
+            text = if (versionName.isNullOrBlank()) base else "$base · v$versionName"
             textSize = 15f
             setTextColor(Color.parseColor("#5F6B7A"))
             setPadding(0, px(6), 0, px(28))
