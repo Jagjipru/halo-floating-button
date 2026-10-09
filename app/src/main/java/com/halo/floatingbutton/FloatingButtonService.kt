@@ -379,7 +379,15 @@ class FloatingButtonService : Service() {
             offsets = g
             effR = (gy0 + gstep).toDouble()
         } else if (docked) {
-            val base = Math.toDegrees(Math.atan2(centreY - cy, centreX - cx))
+            // Aim the arc straight in from whichever edge the button is docked on,
+            // so the four actions stay symmetric about the button no matter how far
+            // up/down (or left/right) along that edge it sits. Aiming at the screen
+            // centre tilted the fan and made it look off-centre.
+            val base = if (xDock) {
+                if (cx < m) 0.0 else 180.0            // left edge → fan right; right edge → fan left
+            } else {
+                if (cy < topThresh) 90.0 else -90.0   // top edge → fan down; bottom edge → fan up
+            }
             offsets = doubleArrayOf(-75.0, -25.0, 25.0, 75.0).map { off ->
                 val a = Math.toRadians(base + off)
                 (rArc * Math.cos(a)).toFloat() to (rArc * Math.sin(a)).toFloat()
