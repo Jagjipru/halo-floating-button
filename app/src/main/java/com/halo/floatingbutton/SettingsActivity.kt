@@ -487,7 +487,7 @@ class SettingsActivity : AppCompatActivity() {
 
     // ---------- updates ----------
     private fun buildUpdateRow(): View {
-        val current = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (e: Exception) { "?" }
+        val current = try { packageManager.getPackageInfo(packageName, 0).versionName ?: "?" } catch (e: Exception) { "?" }
         val row = cardRow()
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(TextView(this).apply { text = "Check for updates"; textSize = 15f; setTextColor(ink) })
