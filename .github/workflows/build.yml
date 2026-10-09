@@ -52,27 +52,7 @@ jobs:
       - name: Build debug APK
         env:
           KS_PW: ${{ github.repository_id }}
-        run: |
-          set -o pipefail
-          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
-
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: build.log
-
-      - name: Expose error to repo on failure
-        if: failure()
-        run: |
-          (grep -nE "^e: |^w: |error:|warning:" build.log | head -60; echo "--- TAIL ---"; tail -c 3000 build.log) > ci-error.txt || echo "no build.log" > ci-error.txt
-          git config user.email "ci@halo.local"
-          git config user.name "halo-ci"
-          git checkout -B ci-debug
-          git add -f ci-error.txt
-          git commit -m "ci error snapshot [skip ci]" || true
-          git push -f origin ci-debug
+        run: ./gradlew assembleDebug --no-daemon
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
