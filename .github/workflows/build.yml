@@ -66,7 +66,7 @@ jobs:
       - name: Expose error to repo on failure
         if: failure()
         run: |
-          tail -c 9000 build.log > ci-error.txt || echo "no build.log" > ci-error.txt
+          (grep -nE "^e: |^w: |error:|warning:" build.log | head -60; echo "--- TAIL ---"; tail -c 3000 build.log) > ci-error.txt || echo "no build.log" > ci-error.txt
           git config user.email "ci@halo.local"
           git config user.name "halo-ci"
           git checkout -B ci-debug
