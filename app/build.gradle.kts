@@ -5,14 +5,14 @@ plugins {
 
 android {
     namespace = "com.halo.floatingbutton"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.halo.floatingbutton"
         minSdk = 26
-        targetSdk = 34
-        versionCode = 20
-        versionName = "0.5.9"
+        targetSdk = 36
+        versionCode = 21
+        versionName = "0.5.10"
     }
 
     // ---- Sideload (debug) signing: stable key cached in CI ----
