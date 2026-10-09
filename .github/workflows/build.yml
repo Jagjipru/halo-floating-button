@@ -63,6 +63,17 @@ jobs:
           name: build-log
           path: build.log
 
+      - name: Expose error to repo on failure
+        if: failure()
+        run: |
+          tail -c 9000 build.log > ci-error.txt || echo "no build.log" > ci-error.txt
+          git config user.email "ci@halo.local"
+          git config user.name "halo-ci"
+          git checkout -B ci-debug
+          git add -f ci-error.txt
+          git commit -m "ci error snapshot [skip ci]" || true
+          git push -f origin ci-debug
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
