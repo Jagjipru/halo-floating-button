@@ -11,8 +11,8 @@ android {
         applicationId = "com.halo.floatingbutton"
         minSdk = 26
         targetSdk = 36
-        versionCode = 22
-        versionName = "0.5.11"
+        versionCode = 23
+        versionName = "0.5.12"
     }
 
     // ---- Sideload (debug) signing: stable key cached in CI ----

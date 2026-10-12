@@ -490,6 +490,7 @@ class FloatingButtonService : Service() {
 
         val speaker = ImageView(this).apply {
             setImageResource(R.drawable.ic_volume); setColorFilter(ink)
+            setPadding(dp(5), dp(5), dp(5), dp(5))   // bigger tap target, same glyph size
         }
         val minus = circleButton(R.drawable.ic_minus)
         val plus = circleButton(R.drawable.ic_plus)
@@ -512,12 +513,17 @@ class FloatingButtonService : Service() {
 
         val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
         var lastVol = -1
+        // Remember the last non-zero level so one-tap unmute restores it.
+        var lastNonZero = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).let { if (it > 0) it else maxVol }
         val updateVol = {
             val vol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
             (fill.layoutParams as LinearLayout.LayoutParams).weight = vol.toFloat()
             (spacer.layoutParams as LinearLayout.LayoutParams).weight = (maxVol - vol).toFloat()
             fill.requestLayout(); spacer.requestLayout()
             percent.text = "${vol * 100 / maxVol}%"
+            // Speaker icon doubles as a mute indicator: crossed-out when silent.
+            speaker.setImageResource(if (vol == 0) R.drawable.ic_volume_off else R.drawable.ic_volume)
+            if (vol > 0) lastNonZero = vol
             if (vol != lastVol) { if (lastVol != -1) haptic(); lastVol = vol }
         }
         touchArea.setOnTouchListener { v, e ->
@@ -548,9 +554,19 @@ class FloatingButtonService : Service() {
             }
             updateVol()
         }
+        // Tap the speaker icon to mute; tap again to restore the previous level.
+        speaker.setOnClickListener {
+            val vol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            val target = if (vol > 0) 0 else lastNonZero.coerceAtLeast(1)
+            runCatching {
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
+            }
+            haptic(strong = true)
+            updateVol()
+        }
         updateVol()
 
-        bar.addView(speaker, LinearLayout.LayoutParams(dp(20), dp(20)).apply { rightMargin = dp(8) })
+        bar.addView(speaker, LinearLayout.LayoutParams(dp(30), dp(30)).apply { rightMargin = dp(4) })
         bar.addView(minus, LinearLayout.LayoutParams(dp(30), dp(30)))
         bar.addView(touchArea, LinearLayout.LayoutParams(0, dp(30), 1f).apply {
             leftMargin = dp(8); rightMargin = dp(8)
